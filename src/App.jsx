@@ -11,6 +11,7 @@ import DataEntitas from './view/pages/DataEntitas';
 
 export default function App() {
   return (
+    // Tag <Router> (HashRouter) INI SANGAT WAJIB ADA di posisi paling luar
     <Router>
       <Routes>
         {/* Rute Standalone (Tanpa Sidebar/Header) */}
@@ -23,6 +24,9 @@ export default function App() {
           <Route path="/data-entitas" element={<DataEntitas />} />
           <Route path="/surat-masuk" element={<SuratMasuk />} />
           <Route path="/surat-keluar" element={<SuratKeluar />} />
+          
+          {/* Rute Penjaga (Fallback) */}
+          <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
     </Router>

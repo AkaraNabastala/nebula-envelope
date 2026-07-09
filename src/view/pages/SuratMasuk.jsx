@@ -16,10 +16,11 @@ export default function SuratMasuk() {
     tanggal: '',
     entitasId: '',
     kategoriId: '',
-    filePath: '' // Sementara dikosongkan sebelum kita buat fitur upload fisik
+    filePath: ''
   });
 
   const [notif, setNotif] = useState('');
+  const [namaFileTampil, setNamaFileTampil] = useState('');
 
   // Fungsi sinkronisasi memuat data dari database lokal
   const muatDataHalaman = async () => {
@@ -48,6 +49,20 @@ export default function SuratMasuk() {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  // Fungsi untuk memilih dan menyalin file dari komputer (PDF/JPG/PNG)
+  const handlePilihBerkas = async () => {
+    if (window.api && window.api.pilihFileArsip) {
+      const fileInfo = await window.api.pilihFileArsip();
+      if (fileInfo) {
+        // Simpan path-nya ke formData untuk di-insert ke SQLite
+        setFormData(prev => ({ ...prev, filePath: fileInfo.path_simpan }));
+        // Tampilkan nama aslinya di layar agar pengguna tahu file sudah masuk
+        setNamaFileTampil(fileInfo.nama_file);
+      }
+    }
+  };
+
+  // Fungsi untuk menyimpan seluruh data form ke SQLite
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.nomorSurat || !formData.judulSurat || !formData.entitasId || !formData.kategoriId) {
@@ -63,16 +78,45 @@ export default function SuratMasuk() {
         // Reset state dan tutup modal
         setIsModalOpen(false);
         setFormData({ nomorSurat: '', judulSurat: '', tanggal: '', entitasId: '', kategoriId: '', filePath: '' });
+        setNamaFileTampil(''); // Reset juga nama file
         
         // Munculkan notifikasi & muat ulang tabel
-        setNotif('Surat masuk berhasil diarsipkan ke dalam sistem.');
+        setNotif('Surat masuk dan berkas fisiknya berhasil diarsipkan.');
         muatDataHalaman();
         
-        setTimeout(() => setNotif(''), 3000);
+        setTimeout(() => setNotif(''), 3500);
       }
     } catch (error) {
       console.error("Gagal menyimpan surat:", error);
       alert("Terjadi kesalahan komputasi lokal saat menyimpan surat.");
+    }
+  };
+
+  // Fungsi untuk membuka file fisik yang sudah tersimpan
+  const handleBukaDokumen = async (pathFile) => {
+    if (window.api && window.api.bukaFileArsip) {
+      await window.api.bukaFileArsip(pathFile);
+    } else {
+      alert("Fungsi buka dokumen belum terhubung ke sistem OS.");
+    }
+  };
+
+  // Fungsi Hapus Surat
+  const handleHapusSurat = async (id, nomorSurat) => {
+    const konfirmasi = window.confirm(`PERINGATAN!\n\nApakah Anda yakin ingin menghapus surat ${nomorSurat} secara permanen?\nFile fisik (jika ada) juga akan dihapus dari sistem komputer.`);
+    
+    if (konfirmasi) {
+      try {
+        if (window.api && window.api.hapusSurat) {
+          await window.api.hapusSurat(id);
+          setNotif(`Surat ${nomorSurat} berhasil dihapus permanen.`);
+          muatDataHalaman(); // Segarkan tabel
+          setTimeout(() => setNotif(''), 3000);
+        }
+      } catch (error) {
+        console.error("Gagal menghapus surat:", error);
+        alert("Terjadi kesalahan saat menghapus data.");
+      }
     }
   };
 
@@ -129,6 +173,7 @@ export default function SuratMasuk() {
                   <th className="p-5">Informasi Surat</th>
                   <th className="p-5">Instansi Pengirim</th>
                   <th className="p-5">Kategori</th>
+                  <th className="p-5 text-right">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -149,12 +194,35 @@ export default function SuratMasuk() {
                         {item.nama_kategori || 'Umum'}
                       </span>
                     </td>
+                    <td className="p-5 text-right flex items-center justify-end space-x-2">
+                      {/* Tombol Lihat Berkas */}
+                      {item.file_path ? (
+                        <button 
+                          onClick={() => handleBukaDokumen(item.file_path)}
+                          title="Buka Dokumen"
+                          className="p-2 bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors shadow-sm"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                        </button>
+                      ) : (
+                        <span className="text-[11px] font-semibold text-slate-400 italic mr-2">Tanpa Lampiran</span>
+                      )}
+
+                      {/* Tombol Hapus */}
+                      <button 
+                        onClick={() => handleHapusSurat(item.id, item.nomor_surat)}
+                        title="Hapus Permanen"
+                        className="p-2 bg-red-50 text-red-500 hover:bg-red-500 hover:text-white rounded-lg transition-colors shadow-sm"
+                      >
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                      </button>
+                    </td>
                   </tr>
                 ))}
 
                 {suratList.length === 0 && (
                   <tr>
-                    <td colSpan="4" className="p-20 text-center">
+                    <td colSpan="5" className="p-20 text-center">
                       <div className="w-14 h-14 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-3 border border-slate-100 text-slate-300">
                         <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2-2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" /></svg>
                       </div>
@@ -179,14 +247,14 @@ export default function SuratMasuk() {
             <div className="relative bg-white w-full max-w-2xl rounded-[2rem] shadow-2xl flex flex-col max-h-[90vh]" style={{ animation: 'modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)' }}>
               
               {/* Header Modal */}
-              <div className="flex items-center justify-between p-6 sm:p-8 border-b border-slate-100">
+              <div className="flex items-center justify-between p-6 sm:p-8 border-b border-slate-100 shrink-0">
                 <div className="flex items-center space-x-3">
                   <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
                     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" /></svg>
                   </div>
                   <div>
                     <h3 className="text-xl font-extrabold text-slate-900">Rekam Surat Masuk</h3>
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Penyimpanan SQLite</p>
+                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Penyimpanan Luring</p>
                   </div>
                 </div>
                 <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-800 bg-slate-50 hover:bg-slate-100 p-2 rounded-full transition-colors">
@@ -194,7 +262,7 @@ export default function SuratMasuk() {
                 </button>
               </div>
 
-              {/* Body Form Form Modal */}
+              {/* Body Form Modal */}
               <div className="p-6 sm:p-8 overflow-y-auto">
                 <form id="formSuratMasuk" onSubmit={handleSubmit} className="space-y-5">
                   
@@ -228,7 +296,7 @@ export default function SuratMasuk() {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-                    {/* DROPDOWN PENGIRIM (Membaca Master Data Entitas) */}
+                    {/* DROPDOWN PENGIRIM */}
                     <div>
                       <label className="block text-xs font-bold text-slate-700 mb-1.5 ml-1">Instansi / Individu Pengirim</label>
                       <select
@@ -245,9 +313,9 @@ export default function SuratMasuk() {
                       </select>
                     </div>
 
-                    {/* DROPDOWN KATEGORI (Membaca Master Kategori) */}
+                    {/* DROPDOWN KATEGORI */}
                     <div>
-                      <label className="block text-xs font-bold text-slate-700 mb-1.5 ml-1">Klasifikasi Kategori Dokumen</label>
+                      <label className="block text-xs font-bold text-slate-700 mb-1.5 ml-1">Klasifikasi Dokumen</label>
                       <select
                         name="kategoriId"
                         value={formData.kategoriId}
@@ -273,15 +341,44 @@ export default function SuratMasuk() {
                       required
                       rows="2"
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-900 font-medium focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none"
-                      placeholder="Contoh: Pengadaan prasarana komputasi laboratorium..."
+                      placeholder="Contoh: Pengadaan prasarana komputasi..."
                     ></textarea>
+                  </div>
+
+                  {/* Upload Berkas (Area Pemilihan File Dokumen/Gambar) */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1.5 ml-1">Pindai / Unggah Berkas (PDF/JPG/PNG)</label>
+                    <div 
+                      onClick={handlePilihBerkas}
+                      className={`w-full border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer group ${
+                        namaFileTampil ? 'border-emerald-400 bg-emerald-50/50' : 'border-slate-300 hover:border-indigo-500 hover:bg-indigo-50/50'
+                      }`}
+                    >
+                      {namaFileTampil ? (
+                        <>
+                          <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-2 text-emerald-600">
+                            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>
+                          </div>
+                          <p className="text-sm font-bold text-emerald-700 truncate px-4">{namaFileTampil}</p>
+                          <p className="text-[11px] font-semibold text-emerald-600/80 mt-0.5">Tersalin ke brankas sistem</p>
+                        </>
+                      ) : (
+                        <>
+                          <div className="w-10 h-10 bg-slate-100 group-hover:bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-2 transition-colors">
+                            <svg className="w-5 h-5 text-slate-400 group-hover:text-indigo-600 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" /></svg>
+                          </div>
+                          <p className="text-sm font-bold text-slate-700">Klik untuk memilih file Dokumen / Gambar</p>
+                          <p className="text-[11px] font-medium text-slate-400 mt-0.5">Opsional (Format: PDF, JPG, PNG)</p>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                 </form>
               </div>
 
               {/* Tombol Aksi */}
-              <div className="p-6 border-t border-slate-100 bg-slate-50 rounded-b-[2rem] flex justify-end gap-3">
+              <div className="p-6 border-t border-slate-100 bg-slate-50 rounded-b-[2rem] flex justify-end gap-3 shrink-0">
                 <button 
                   type="button" 
                   onClick={() => setIsModalOpen(false)}

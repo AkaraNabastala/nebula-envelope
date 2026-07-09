@@ -45,4 +45,14 @@ contextBridge.exposeInMainWorld('api', {
 
   getSuratKeluar: () => ipcRenderer.invoke('db:getSuratKeluar'),
   tambahSuratKeluar: (data) => ipcRenderer.invoke('db:tambahSuratKeluar', data),
+
+  pilihFileArsip: () => {
+    return ipcRenderer.invoke('dialog:pilihFile');
+  },
+
+  // ----------------------------------------------------
+  // 7. FUNGSI HAPUS DATA
+  // ----------------------------------------------------
+  hapusEntitas: (id) => ipcRenderer.invoke('db:hapusEntitas', id),
+  hapusSurat: (id) => ipcRenderer.invoke('db:hapusSurat', id)
 });

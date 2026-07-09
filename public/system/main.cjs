@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron/main');
 const path = require('node:path');
 const Database = require('better-sqlite3');
+const fs = require('fs');
 
 app.disableHardwareAcceleration();
 
@@ -207,4 +208,108 @@ ipcMain.handle('db:tambahSuratKeluar', (event, data) => {
   `);
   const info = stmt.run(data.nomorSurat, data.judulSurat, data.tanggal, data.entitasId, data.kategoriId, data.filePath);
   return info.lastInsertRowid;
+});
+// -- Handler Dasbor (Menghitung Statistik Realtime) --
+ipcMain.handle('db:getDashboardStats', (event) => {
+  // 1. Hitung Total Arsip Keseluruhan
+  const totalArsip = db.prepare("SELECT count(*) as count FROM arsip_surat").get().count;
+  
+  // 2. Hitung Total Surat Keluar
+  const totalSuratKeluar = db.prepare("SELECT count(*) as count FROM arsip_surat WHERE tipe_surat = 'Keluar'").get().count;
+  
+  // 3. Hitung Total Surat Masuk
+  const totalSuratMasuk = db.prepare("SELECT count(*) as count FROM arsip_surat WHERE tipe_surat = 'Masuk'").get().count;
+  
+  // 4. Hitung Total Entitas Aktif
+  const totalEntitas = db.prepare("SELECT count(*) as count FROM entitas").get().count;
+
+  // 5. Ambil 5 Log Aktivitas Terakhir (Campuran Surat Masuk & Keluar)
+  const logTerbaru = db.prepare(`
+    SELECT a.nomor_surat, a.judul_surat, a.tanggal, a.tipe_surat, e.nama as nama_entitas
+    FROM arsip_surat a
+    LEFT JOIN entitas e ON a.entitas_id = e.id
+    ORDER BY a.id DESC 
+    LIMIT 5
+  `).all();
+
+  // Kembalikan semua data dalam satu paket objek
+  return {
+    totalArsip,
+    totalSuratKeluar,
+    totalSuratMasuk,
+    totalEntitas,
+    logTerbaru
+  };
+});
+// -- Handler Pilih dan Salin Berkas Fisik (PDF / Gambar) --
+ipcMain.handle('dialog:pilihFile', async () => {
+  // 1. Buka jendela dialog pemilihan file
+  const result = await dialog.showOpenDialog({
+    title: 'Pilih Berkas Arsip Fisik',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Dokumen & Gambar', extensions: ['pdf', 'jpg', 'jpeg', 'png'] }
+    ]
+  });
+
+  // Jika batal memilih file
+  if (result.canceled || result.filePaths.length === 0) {
+    return null; 
+  }
+
+  // 2. Siapkan Folder "Brankas" di data lokal aplikasi
+  const folderArsip = path.join(app.getPath('userData'), 'Berkas_Arsip');
+  if (!fs.existsSync(folderArsip)) {
+    fs.mkdirSync(folderArsip, { recursive: true }); // Buat folder jika belum ada
+  }
+
+  // 3. Proses penyalinan file
+  const sourcePath = result.filePaths[0]; // Jalur file asli
+  const originalFileName = path.basename(sourcePath);
+  
+  // Menambahkan timestamp agar nama file unik (mencegah bentrok jika nama file sama)
+  const uniqueFileName = `${Date.now()}_${originalFileName}`;
+  const destPath = path.join(folderArsip, uniqueFileName); // Jalur brankas tujuan
+
+  try {
+    fs.copyFileSync(sourcePath, destPath); // Salin file
+    
+    // Kembalikan nama file dan jalur simpannya ke React
+    return {
+      nama_file: originalFileName,
+      path_simpan: destPath
+    };
+  } catch (error) {
+    console.error("Gagal menyalin file:", error);
+    return null;
+  }
+});
+
+// -- Handler Hapus Entitas --
+ipcMain.handle('db:hapusEntitas', (event, id) => {
+  const stmt = db.prepare('DELETE FROM entitas WHERE id = ?');
+  stmt.run(id);
+  return true;
+});
+
+// -- Handler Hapus Surat (Masuk & Keluar) beserta File Fisiknya --
+ipcMain.handle('db:hapusSurat', (event, id) => {
+  // 1. Cari tahu apakah surat ini punya file fisik
+  const surat = db.prepare('SELECT file_path FROM arsip_surat WHERE id = ?').get(id);
+  
+  // 2. Jika ada filenya, hapus file tersebut dari hardisk komputer
+  if (surat && surat.file_path) {
+    try {
+      if (fs.existsSync(surat.file_path)) {
+        fs.unlinkSync(surat.file_path);
+      }
+    } catch (err) {
+      console.error("Gagal menghapus file fisik:", err);
+    }
+  }
+  
+  // 3. Hapus data teksnya dari database SQLite
+  const stmt = db.prepare('DELETE FROM arsip_surat WHERE id = ?');
+  stmt.run(id);
+  return true;
 });
