@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/* 1. Mendaftarkan Font Lokal Poppins ke dalam sistem aplikasi */
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Poppins';
+  src: url('/fonts/Poppins-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+}
+
+/* 2. Memberitahu Tailwind v4 untuk menjadikan Poppins sebagai font utama */
+@theme {
+  --font-sans: 'Poppins', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* 3. Memastikan seluruh halaman menggunakan font ini */
+body {
+  font-family: 'Poppins', sans-serif;
+}
