@@ -1,89 +1,489 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron/main');
 const path = require('node:path');
-const Database = require('better-sqlite3');
 const fs = require('fs');
+const Database = require('better-sqlite3');
+const express = require('express');
+const cors = require('cors');
+
+// --- SUPPRESS HARmless GTK/GLIB WARNINGS ---
+const originalStderrWrite = process.stderr.write;
+process.stderr.write = function(chunk, encoding, callback) {
+  if (typeof chunk === 'string' && chunk.includes('GLib-GObject')) {
+    // Ignore harmless GTK warnings
+    return true;
+  }
+  return originalStderrWrite.apply(process.stderr, arguments);
+};
+// --------------------------------------------
 
 app.disableHardwareAcceleration();
+let mainWindow = null;
+let expressApp = null;
+let server = null;
 
 // ==========================================
-// 1. INISIALISASI DATABASE & SKEMA RELASIONAL
+// 1. INISIALISASI DATABASE SQLITE
 // ==========================================
-const dbPath = path.join(app.getPath('userData'), 'nabastala-arsip.sqlite');
+const dbPath = path.join(app.getPath('userData'), 'nabastala-arsip-v2.sqlite');
 const db = new Database(dbPath);
-
-// Mengaktifkan Foreign Key agar relasi antar tabel (seperti arsip dan kategori) saling mengunci
 db.pragma('foreign_keys = ON');
 
 function initDatabase() {
   db.exec(`
-    -- Tabel Pengguna (Untuk sistem Login)
-    CREATE TABLE IF NOT EXISTS pengguna (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL, -- Di tahap produksi, ini idealnya di-hash
-      role TEXT DEFAULT 'Administrator'
+    CREATE TABLE IF NOT EXISTS settings (
+      id TEXT PRIMARY KEY,
+      nama_instansi TEXT,
+      folder_surat_keluar TEXT,
+      folder_surat_masuk TEXT,
+      format_nomor_default TEXT,
+      manual_folder_selected INTEGER,
+      master_pin TEXT,
+      counter_surat_keluar INTEGER,
+      server_enabled INTEGER DEFAULT 0,
+      server_port INTEGER DEFAULT 8080,
+      enable_qrcode INTEGER DEFAULT 0
     );
 
-    -- Tabel Entitas (Pengembangan dari kode Anda: Fleksibel untuk Guru/Siswa/Karyawan/Klien)
-    CREATE TABLE IF NOT EXISTS entitas (
+    CREATE TABLE IF NOT EXISTS templates (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      kategori TEXT NOT NULL, -- (misal: 'Guru', 'Siswa', 'Karyawan', 'Vendor')
-      nama TEXT NOT NULL,
-      nomor_induk TEXT, -- NIP / NIS / NIK
-      kontak TEXT,
-      detail_tambahan TEXT
+      nama_template TEXT,
+      konten TEXT,
+      variables TEXT,
+      is_docx INTEGER,
+      file_name TEXT,
+      file_path TEXT,
+      ukuran_kertas TEXT,
+      kop_surat_path TEXT
     );
 
-    -- Tabel Kategori Surat (Master Data)
-    CREATE TABLE IF NOT EXISTS kategori_surat (
+    CREATE TABLE IF NOT EXISTS master_data (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      kode_kategori TEXT UNIQUE NOT NULL, -- (misal: 'SK', 'SPK', 'INV')
-      nama_kategori TEXT NOT NULL
+      nama TEXT,
+      kategori TEXT,
+      attributes TEXT
     );
 
-    -- Tabel Arsip Surat (Pusat Data Relasional)
-    CREATE TABLE IF NOT EXISTS arsip_surat (
+    CREATE TABLE IF NOT EXISTS outgoing_letters (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      tipe_surat TEXT NOT NULL, -- 'Masuk' atau 'Keluar'
-      nomor_surat TEXT UNIQUE NOT NULL,
-      judul_surat TEXT NOT NULL,
-      tanggal TEXT NOT NULL,
-      kategori_id INTEGER,
-      entitas_id INTEGER, -- Pengirim (jika masuk) atau Penerima (jika keluar)
-      file_path TEXT, -- Lokasi file PDF/Scan yang disimpan di lokal
-      FOREIGN KEY(kategori_id) REFERENCES kategori_surat(id) ON DELETE SET NULL,
-      FOREIGN KEY(entitas_id) REFERENCES entitas(id) ON DELETE SET NULL
+      nomor_surat TEXT,
+      nama_template TEXT,
+      perihal TEXT,
+      nama_file TEXT,
+      formData TEXT,
+      konten TEXT,
+      file_path TEXT,
+      is_docx INTEGER,
+      folder_tersimpan TEXT,
+      created_at TEXT,
+      status TEXT DEFAULT 'Draf'
+    );
+
+    CREATE TABLE IF NOT EXISTS incoming_archives (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      nomor_surat TEXT,
+      judul_surat TEXT,
+      tanggal_diterima TEXT,
+      kategori TEXT,
+      pengirim TEXT,
+      file_path TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      waktu TEXT,
+      aktivitas TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      username TEXT PRIMARY KEY,
+      password TEXT,
+      role TEXT DEFAULT 'operator'
     );
   `);
 
-  // Menambahkan Akun Admin Bawaan (Jika tabel pengguna masih kosong)
-  const adminCheck = db.prepare('SELECT count(*) as count FROM pengguna').get();
-  if (adminCheck.count === 0) {
-    db.prepare("INSERT INTO pengguna (username, password, role) VALUES (?, ?, ?)").run('admin', '123456', 'Super Administrator');
-    console.log('Akun default dibuat: admin / 123456');
+  // Migrations for existing databases
+  try { db.exec("ALTER TABLE settings ADD COLUMN enable_qrcode INTEGER DEFAULT 0;"); } catch(e) {}
+  try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'operator';"); } catch(e) {}
+  try { db.exec("ALTER TABLE outgoing_letters ADD COLUMN status TEXT DEFAULT 'Draf';"); } catch(e) {}
+
+  // Update existing admin to be admin role if just migrated
+  try { db.prepare("UPDATE users SET role = 'admin' WHERE username = 'admin' AND role = 'operator'").run(); } catch(e) {}
+
+  // Seed default settings
+  const settingsCount = db.prepare('SELECT count(*) as count FROM settings').get();
+  if (settingsCount.count === 0) {
+    db.prepare(`
+      INSERT INTO settings (id, nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected, master_pin, counter_surat_keluar, server_enabled, server_port, enable_qrcode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('config', 'Nama Organisasi', 'D:/data/surat/keluar', 'D:/data/surat/masuk', '{NO}/SURAT/{BULAN}/{TAHUN}', 0, '123456', 0, 0, 8080, 0);
   }
-  // Tambahkan ini di dalam fungsi initDatabase() Anda, tepat setelah db.exec(...)
-  const katCheck = db.prepare('SELECT count(*) as count FROM kategori_surat').get();
-  if (katCheck.count === 0) {
-    const insertKat = db.prepare("INSERT INTO kategori_surat (kode_kategori, nama_kategori) VALUES (?, ?)");
-    insertKat.run('SU', 'Surat Undangan');
-    insertKat.run('SK', 'Surat Keputusan / Direksi');
-    insertKat.run('SPK', 'Surat Perjanjian Kerjasama');
-    insertKat.run('PNW', 'Surat Penawaran Kerja');
-    insertKat.run('UMM', 'Umum / Lainnya');
-    console.log('Kategori master default berhasil dibuat.');
+
+  // Seed user
+  const userCount = db.prepare('SELECT count(*) as count FROM users').get();
+  if (userCount.count === 0) {
+    db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)').run('admin', '123', 'admin');
+  }
+}
+initDatabase();
+
+// Helper Logger
+function addAuditLog(aktivitas) {
+  try {
+    db.prepare('INSERT INTO audit_logs (waktu, aktivitas) VALUES (?, ?)').run(new Date().toLocaleString('id-ID'), aktivitas);
+  } catch (e) {
+    console.error('Gagal log:', e);
   }
 }
 
-// Jalankan pembuatan tabel
-initDatabase();
+// ==========================================
+// 2. EXPRESS.JS WEB SERVER (API + STATIC FILES)
+// ==========================================
+function startExpressServer(port) {
+  if (server) return; // Sudah berjalan
+
+  expressApp = express();
+  expressApp.use(cors());
+  expressApp.use(express.json({ limit: '50mb' })); // Terima payload besar untuk base64
+
+  // Melayani file statis Frontend React
+  const distPath = path.join(__dirname, '../..', 'dist'); // Path ke build vite
+  if (fs.existsSync(distPath)) {
+    expressApp.use(express.static(distPath));
+  }
+
+  // --- API ROUTING ---
+  
+  // Settings API
+  expressApp.get('/api/settings', (req, res) => {
+    const data = db.prepare("SELECT * FROM settings WHERE id = 'config'").get();
+    res.json(data);
+  });
+  expressApp.post('/api/settings', (req, res) => {
+    const { nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected, master_pin, counter_surat_keluar, server_enabled, server_port, enable_qrcode } = req.body;
+    db.prepare(`
+      UPDATE settings SET 
+        nama_instansi = ?, folder_surat_keluar = ?, folder_surat_masuk = ?, format_nomor_default = ?, 
+        manual_folder_selected = ?, master_pin = ?, counter_surat_keluar = ?, server_enabled = ?, server_port = ?, enable_qrcode = ?
+      WHERE id = 'config'
+    `).run(nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected ? 1 : 0, master_pin, counter_surat_keluar, server_enabled ? 1 : 0, server_port, enable_qrcode ? 1 : 0);
+    res.json({ success: true });
+  });
+
+  // Auth API
+  expressApp.post('/api/auth/login', (req, res) => {
+    const { username, password } = req.body;
+
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+    if (user && user.password === password) {
+      addAuditLog(`Login berhasil: ${username}`);
+      res.json({ success: true, role: user.role || 'operator' });
+    } else {
+      addAuditLog(`Percobaan login gagal untuk: ${username}`);
+      res.status(401).json({ error: 'Unauthorized' });
+    }
+  });
+
+  // Users API (RBAC)
+  expressApp.get('/api/users', (req, res) => {
+    const data = db.prepare('SELECT username, role FROM users').all();
+    res.json(data);
+  });
+  expressApp.post('/api/users', (req, res) => {
+    const { username, password, role } = req.body;
+    // Check if exists
+    const existing = db.prepare('SELECT username FROM users WHERE username = ?').get(username);
+    if (existing) {
+       // Update
+       db.prepare('UPDATE users SET password = ?, role = ? WHERE username = ?').run(password, role, username);
+       addAuditLog(`Mengubah pengguna: ${username}`);
+    } else {
+       // Insert
+       db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)').run(username, password, role);
+       addAuditLog(`Menambahkan pengguna baru: ${username} (${role})`);
+    }
+    res.json({ success: true });
+  });
+  expressApp.delete('/api/users/:username', (req, res) => {
+    if (req.params.username === 'admin') return res.status(400).json({ error: 'Cannot delete admin' });
+    db.prepare('DELETE FROM users WHERE username = ?').run(req.params.username);
+    addAuditLog(`Menghapus pengguna: ${req.params.username}`);
+    res.json({ success: true });
+  });
+
+  // Dashboard Stats API
+  expressApp.get('/api/dashboard/stats', (req, res) => {
+    const total_outgoing = db.prepare('SELECT count(*) as c FROM outgoing_letters').get().c;
+    const total_incoming = db.prepare('SELECT count(*) as c FROM incoming_archives').get().c;
+    const total_templates = db.prepare('SELECT count(*) as c FROM templates').get().c;
+    
+    // Get monthly counts for the current year
+    const year = new Date().getFullYear().toString();
+    const outgoing_monthly = db.prepare("SELECT strftime('%m', created_at) as month, count(*) as count FROM outgoing_letters WHERE strftime('%Y', created_at) = ? GROUP BY month").all(year);
+    const incoming_monthly = db.prepare("SELECT strftime('%m', created_at) as month, count(*) as count FROM incoming_archives WHERE strftime('%Y', created_at) = ? GROUP BY month").all(year);
+    
+    const chartData = [];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    for(let i=1; i<=12; i++) {
+       const mStr = i.toString().padStart(2, '0');
+       const outItem = outgoing_monthly.find(x => x.month === mStr);
+       const incItem = incoming_monthly.find(x => x.month === mStr);
+       chartData.push({
+          name: months[i-1],
+          outgoing: outItem ? outItem.count : 0,
+          incoming: incItem ? incItem.count : 0
+       });
+    }
+
+    res.json({
+       total_outgoing,
+       total_incoming,
+       total_templates,
+       chartData
+    });
+  });
+
+  // Master Data API
+  expressApp.get('/api/master', (req, res) => {
+    const data = db.prepare('SELECT * FROM master_data').all();
+    // Parse attributes JSON
+    const parsedData = data.map(d => ({ ...d, attributes: JSON.parse(d.attributes || '{}') }));
+    res.json(parsedData);
+  });
+  expressApp.post('/api/master', (req, res) => {
+    const { nama, kategori, attributes } = req.body;
+    const info = db.prepare('INSERT INTO master_data (nama, kategori, attributes) VALUES (?, ?, ?)').run(nama, kategori, JSON.stringify(attributes || {}));
+    addAuditLog(`Menambahkan Master Data Entitas: ${nama}`);
+    res.json({ id: info.lastInsertRowid });
+  });
+  expressApp.delete('/api/master/:id', (req, res) => {
+    db.prepare('DELETE FROM master_data WHERE id = ?').run(req.params.id);
+    addAuditLog(`Menghapus Master Data ID: ${req.params.id}`);
+    res.json({ success: true });
+  });
+  expressApp.delete('/api/master/bulk/all', (req, res) => {
+    db.prepare('DELETE FROM master_data').run();
+    addAuditLog('Menghapus SELURUH Master Data');
+    res.json({ success: true });
+  });
+  expressApp.post('/api/master/bulk/delete', (req, res) => {
+    const { ids } = req.body;
+    if (ids && Array.isArray(ids) && ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(',');
+      db.prepare(`DELETE FROM master_data WHERE id IN (${placeholders})`).run(ids);
+      addAuditLog(`Menghapus ${ids.length} Master Data secara massal`);
+    }
+    res.json({ success: true });
+  });
+
+  // Templates API
+  expressApp.get('/api/templates', (req, res) => {
+    const data = db.prepare('SELECT * FROM templates').all();
+    const parsed = data.map(d => ({ ...d, variables: JSON.parse(d.variables || '[]'), is_docx: d.is_docx === 1 }));
+    res.json(parsed);
+  });
+  expressApp.post('/api/templates', (req, res) => {
+    const { id, nama_template, konten, variables, is_docx, file_name, file_base64, ukuran_kertas, kop_surat_base64 } = req.body;
+    
+    let file_path = '';
+    let kop_surat_path = '';
+    const folderArsip = path.join(app.getPath('userData'), 'Berkas_Arsip');
+    if (!fs.existsSync(folderArsip)) fs.mkdirSync(folderArsip, { recursive: true });
+
+    if (file_base64 && file_base64.trim() !== '') {
+      const safeName = `${Date.now()}_${(file_name || 'template.docx').replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+      file_path = path.join(folderArsip, safeName);
+      fs.writeFileSync(file_path, Buffer.from(file_base64.replace(/^data:.*,/, ''), 'base64'));
+    }
+
+    if (kop_surat_base64 && kop_surat_base64.trim() !== '') {
+      const safeNameKop = `${Date.now()}_kop_surat.png`;
+      kop_surat_path = path.join(folderArsip, safeNameKop);
+      fs.writeFileSync(kop_surat_path, Buffer.from(kop_surat_base64.replace(/^data:image\/[a-z]+;base64,/, ''), 'base64'));
+    }
+
+    if (id) {
+      // UPDATE MODE
+      const existing = db.prepare('SELECT * FROM templates WHERE id = ?').get(id);
+      if (existing) {
+        const finalFilePath = file_path ? file_path : existing.file_path;
+        const finalKopPath = kop_surat_path ? kop_surat_path : existing.kop_surat_path;
+        // Keep the old file_name if not updating docx
+        const finalFileName = file_base64 ? file_name : existing.file_name;
+
+        db.prepare(`
+          UPDATE templates 
+          SET nama_template = ?, konten = ?, variables = ?, is_docx = ?, file_name = ?, file_path = ?, ukuran_kertas = ?, kop_surat_path = ?
+          WHERE id = ?
+        `).run(nama_template, konten, JSON.stringify(variables || []), is_docx ? 1 : 0, finalFileName, finalFilePath, ukuran_kertas, finalKopPath, id);
+        addAuditLog(`Mengubah Template Surat: ${nama_template}`);
+        return res.json({ id: id });
+      }
+    }
+
+    // INSERT MODE
+    const info = db.prepare(`
+      INSERT INTO templates (nama_template, konten, variables, is_docx, file_name, file_path, ukuran_kertas, kop_surat_path) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(nama_template, konten, JSON.stringify(variables || []), is_docx ? 1 : 0, file_name, file_path, ukuran_kertas, kop_surat_path);
+    addAuditLog(`Menyimpan Template Surat Baru: ${nama_template}`);
+    res.json({ id: info.lastInsertRowid });
+  });
+  expressApp.delete('/api/templates/:id', (req, res) => {
+    db.prepare('DELETE FROM templates WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Outgoing Letters API
+  expressApp.get('/api/outgoing', (req, res) => {
+    const data = db.prepare('SELECT * FROM outgoing_letters').all();
+    const parsed = data.map(d => ({ ...d, formData: JSON.parse(d.formData || '{}'), is_docx: d.is_docx === 1 }));
+    res.json(parsed);
+  });
+  expressApp.post('/api/outgoing', (req, res) => {
+    const { nomor_surat, nama_template, perihal, nama_file, formData, konten, file_path, is_docx, folder_tersimpan, file_base64 } = req.body;
+    
+    let finalFilePath = file_path || '';
+
+    // Auto-fix for WSL/Linux environments running with Windows Paths
+    let targetDir = folder_tersimpan;
+    if (targetDir && process.platform !== 'win32') {
+      targetDir = targetDir.replace(/^([A-Za-z]):[\\/]/, (match, drive) => {
+        return `/mnt/${drive.toLowerCase()}/`;
+      }).replace(/\\/g, '/');
+    }
+
+    // Jika ada base64 (DOCX murni dari generateNativeDocx), tulis file fisiknya!
+    if (is_docx && file_base64 && targetDir) {
+      try {
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        finalFilePath = path.join(targetDir, `${nama_file}.docx`);
+        const base64Data = file_base64.replace(/^data:.*,/, '');
+        fs.writeFileSync(finalFilePath, Buffer.from(base64Data, 'base64'));
+      } catch (err) {
+        console.error("Gagal menyimpan fisik DOCX:", err);
+      }
+    } else if (!is_docx && konten && targetDir) {
+      // Fallback: Tulis file HTML sebagai .doc untuk template editor biasa
+      try {
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+        finalFilePath = path.join(targetDir, `${nama_file}.doc`);
+        const header = "<html xmlns:o='urn:schemas-microsoft-microsoft-com:office:office' " +
+          "xmlns:w='urn:schemas-microsoft-com:office:word' " +
+          "xmlns='http://www.w3.org/TR/REC-html40'>" +
+          "<head><meta charset='utf-8'><title>" + (nomor_surat || 'Surat') + "</title>" +
+          "<style>body{font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;margin:2cm;}</style></head><body>";
+        const formattedBody = konten.replace(/\n/g, '<br/>');
+        const footer = "</body></html>";
+        const sourceHTML = header + formattedBody + footer;
+        fs.writeFileSync(finalFilePath, '\ufeff' + sourceHTML, 'utf8');
+      } catch (err) {
+        console.error("Gagal menyimpan fisik DOC (HTML):", err);
+      }
+    }
+
+    const info = db.prepare(`
+      INSERT INTO outgoing_letters (nomor_surat, nama_template, perihal, nama_file, formData, konten, file_path, is_docx, folder_tersimpan, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(nomor_surat, nama_template, perihal, nama_file, JSON.stringify(formData || {}), konten, finalFilePath, is_docx ? 1 : 0, folder_tersimpan, new Date().toISOString());
+    
+    // Auto-increment counter
+    db.prepare("UPDATE settings SET counter_surat_keluar = counter_surat_keluar + 1 WHERE id = 'config'").run();
+    addAuditLog(`Membuat Surat Keluar No: ${nomor_surat}`);
+    res.json({ id: info.lastInsertRowid });
+  });
+  // Update Status Outgoing Letter
+  expressApp.post('/api/outgoing/:id/status', (req, res) => {
+    const { status } = req.body;
+    db.prepare('UPDATE outgoing_letters SET status = ? WHERE id = ?').run(status, req.params.id);
+    addAuditLog(`Memperbarui status surat keluar ID ${req.params.id} menjadi: ${status}`);
+    res.json({ success: true });
+  });
+
+  // Download File API (Untuk Arsip)
+  expressApp.get('/api/download', (req, res) => {
+    const filePath = req.query.path;
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).send("File tidak ditemukan di server lokal.");
+    }
+    res.download(filePath);
+  });
+
+  expressApp.delete('/api/outgoing/:id', (req, res) => {
+    db.prepare('DELETE FROM outgoing_letters WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Incoming Archives API
+  expressApp.get('/api/incoming', (req, res) => {
+    res.json(db.prepare('SELECT * FROM incoming_archives').all());
+  });
+  expressApp.post('/api/incoming', (req, res) => {
+    const { nomor_surat, judul_surat, tanggal_diterima, kategori, pengirim, file_path } = req.body;
+    const tgl = tanggal_diterima || new Date().toISOString().split('T')[0];
+    const info = db.prepare(`
+      INSERT INTO incoming_archives (nomor_surat, judul_surat, tanggal_diterima, kategori, pengirim, file_path, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(nomor_surat, judul_surat, tgl, kategori, pengirim, file_path, new Date().toISOString());
+    addAuditLog(`Mengarsipkan Surat Masuk No: ${nomor_surat}`);
+    res.json({ id: info.lastInsertRowid });
+  });
+  expressApp.delete('/api/incoming/:id', (req, res) => {
+    db.prepare('DELETE FROM incoming_archives WHERE id = ?').run(req.params.id);
+    res.json({ success: true });
+  });
+
+  // Audit Logs API
+  expressApp.get('/api/logs', (req, res) => {
+    const logs = db.prepare('SELECT * FROM audit_logs ORDER BY id DESC').all();
+    res.json(logs);
+  });
+
+  // Backup Database Endpoint
+  expressApp.get('/api/backup', (req, res) => {
+    // Return the sqlite file
+    res.download(dbPath, 'nabastala-arsip-v2_backup.sqlite');
+    addAuditLog('Melakukan Backup Database');
+  });
+
+  // Since restore requires file upload and we only have express.json(), 
+  // it's better to handle restore via IPC to let user select a file via Native Dialog.
+
+  // Fallback for React Router (Single Page App)
+  expressApp.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+
+  const bindAddress = db.prepare("SELECT server_enabled FROM settings WHERE id = 'config'").get()?.server_enabled === 1 ? '0.0.0.0' : '127.0.0.1';
+  
+  server = expressApp.listen(port, bindAddress, () => {
+    console.log(`Express Server running on ${bindAddress}:${port}`);
+  });
+}
+
+function stopExpressServer() {
+  if (server) {
+    server.close();
+    server = null;
+    expressApp = null;
+    console.log('Express Server stopped.');
+  }
+}
+
+// ALWAYS start Express server on startup because local React frontend relies on it
+const s = db.prepare("SELECT server_port FROM settings WHERE id = 'config'").get();
+startExpressServer(s?.server_port || 8080);
 
 // ==========================================
-// 2. PEMBUATAN JENDELA APLIKASI
+// 3. JENDELA APLIKASI ELECTRON (FRONTEND UTAMA)
 // ==========================================
 function createWindow () {
-  const win = new BrowserWindow({
-    width: 1280, // Dibuat lebih lebar (standar aplikasi desktop modern)
+  mainWindow = new BrowserWindow({
+    width: 1280,
     height: 800,
     minWidth: 1024,
     minHeight: 768,
@@ -92,60 +492,21 @@ function createWindow () {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.cjs')
     },
-    autoHideMenuBar: true // Menyembunyikan menu bawaan Windows agar terlihat elegan
+    autoHideMenuBar: true,
+    frame: false
   });
 
   if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5173');
+    // Buka Console (DevTools) otomatis saat dalam mode development
+    mainWindow.webContents.openDevTools();
   } else {
-    win.loadFile(path.join(__dirname, 'dist/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../..', 'dist/index.html'));
   }
 }
 
-// ==========================================
-// 3. PUSAT KENDALI (IPC HANDLERS / API LOKAL)
-// ==========================================
-
-// -- Handler Login --
-ipcMain.handle('db:verifikasiLogin', (event, { username, password }) => {
-  const stmt = db.prepare('SELECT id, username, role FROM pengguna WHERE username = ? AND password = ?');
-  const user = stmt.get(username, password);
-  return user || null; // Mengembalikan data user jika benar, null jika salah
-});
-
-// -- Handler Entitas (Kode Anda yang Diperbarui) --
-ipcMain.handle('db:getEntitas', (event, kategori) => {
-  // Jika kategori kosong, ambil semua. Jika ada, saring berdasarkan kategori.
-  let stmt;
-  if (kategori) {
-    stmt = db.prepare('SELECT * FROM entitas WHERE kategori = ? ORDER BY nama ASC');
-    return stmt.all(kategori);
-  } else {
-    stmt = db.prepare('SELECT * FROM entitas ORDER BY nama ASC');
-    return stmt.all();
-  }
-});
-
-ipcMain.handle('db:tambahEntitas', (event, data) => {
-  const stmt = db.prepare('INSERT INTO entitas (kategori, nama, nomor_induk, kontak, detail_tambahan) VALUES (?, ?, ?, ?, ?)');
-  const info = stmt.run(data.kategori, data.nama, data.nomor_induk, data.kontak, data.detail_tambahan);
-  return info.lastInsertRowid;
-});
-
-// -- Handler Dialog Sistem --
-ipcMain.handle('dialog:pilihFolder', async () => {
-  const result = await dialog.showOpenDialog({
-    properties: ['openDirectory', 'createDirectory'] // Diizinkan membuat folder baru saat memilih
-  });
-  return result.canceled ? null : result.filePaths[0];
-});
-
-// ==========================================
-// 4. SIKLUS HIDUP APLIKASI
-// ==========================================
 app.whenReady().then(() => {
   createWindow();
-  
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -153,163 +514,118 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    // Menutup koneksi database dengan aman saat aplikasi dimatikan
+    if (server) server.close();
     db.close(); 
     app.quit();
   }
 });
 
-// -- Handler Kategori Surat (Untuk Dropdown) --
-ipcMain.handle('db:getKategoriSurat', (event) => {
-  return db.prepare('SELECT * FROM kategori_surat ORDER BY nama_kategori ASC').all();
+// ==========================================
+// 4. IPC HANDLERS UNTUK WINDOW & NATIVE DIALOG
+// ==========================================
+ipcMain.on('window:minimize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) win.minimize();
+});
+ipcMain.on('window:maximize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) {
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+  }
+});
+ipcMain.on('window:close', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win) win.close();
 });
 
-// -- Handler Ambil Semua Surat Masuk (Dengan Query Relasional JOIN) --
-ipcMain.handle('db:getSuratMasuk', (event) => {
-  const stmt = db.prepare(`
-    SELECT a.*, e.nama as nama_pengirim, k.nama_kategori 
-    FROM arsip_surat a
-    LEFT JOIN entitas e ON a.entitas_id = e.id
-    LEFT JOIN kategori_surat k ON a.kategori_id = k.id
-    WHERE a.tipe_surat = 'Masuk'
-    ORDER BY a.id DESC
-  `);
-  return stmt.all();
-});
-
-// -- Handler Tambah Surat Masuk Baru --
-ipcMain.handle('db:tambahSuratMasuk', (event, data) => {
-  const stmt = db.prepare(`
-    INSERT INTO arsip_surat (tipe_surat, nomor_surat, judul_surat, tanggal, entitas_id, kategori_id, file_path)
-    VALUES ('Masuk', ?, ?, ?, ?, ?, ?)
-  `);
-  const info = stmt.run(data.nomorSurat, data.judulSurat, data.tanggal, data.entitasId, data.kategoriId, data.filePath);
-  return info.lastInsertRowid;
-});
-
-// -- Handler Ambil Semua Surat Keluar (Relasional JOIN) --
-ipcMain.handle('db:getSuratKeluar', (event) => {
-  const stmt = db.prepare(`
-    SELECT a.*, e.nama as nama_penerima, k.nama_kategori 
-    FROM arsip_surat a
-    LEFT JOIN entitas e ON a.entitas_id = e.id
-    LEFT JOIN kategori_surat k ON a.kategori_id = k.id
-    WHERE a.tipe_surat = 'Keluar'
-    ORDER BY a.id DESC
-  `);
-  return stmt.all();
-});
-
-// -- Handler Tambah Surat Keluar Baru --
-ipcMain.handle('db:tambahSuratKeluar', (event, data) => {
-  const stmt = db.prepare(`
-    INSERT INTO arsip_surat (tipe_surat, nomor_surat, judul_surat, tanggal, entitas_id, kategori_id, file_path)
-    VALUES ('Keluar', ?, ?, ?, ?, ?, ?)
-  `);
-  const info = stmt.run(data.nomorSurat, data.judulSurat, data.tanggal, data.entitasId, data.kategoriId, data.filePath);
-  return info.lastInsertRowid;
-});
-// -- Handler Dasbor (Menghitung Statistik Realtime) --
-ipcMain.handle('db:getDashboardStats', (event) => {
-  // 1. Hitung Total Arsip Keseluruhan
-  const totalArsip = db.prepare("SELECT count(*) as count FROM arsip_surat").get().count;
-  
-  // 2. Hitung Total Surat Keluar
-  const totalSuratKeluar = db.prepare("SELECT count(*) as count FROM arsip_surat WHERE tipe_surat = 'Keluar'").get().count;
-  
-  // 3. Hitung Total Surat Masuk
-  const totalSuratMasuk = db.prepare("SELECT count(*) as count FROM arsip_surat WHERE tipe_surat = 'Masuk'").get().count;
-  
-  // 4. Hitung Total Entitas Aktif
-  const totalEntitas = db.prepare("SELECT count(*) as count FROM entitas").get().count;
-
-  // 5. Ambil 5 Log Aktivitas Terakhir (Campuran Surat Masuk & Keluar)
-  const logTerbaru = db.prepare(`
-    SELECT a.nomor_surat, a.judul_surat, a.tanggal, a.tipe_surat, e.nama as nama_entitas
-    FROM arsip_surat a
-    LEFT JOIN entitas e ON a.entitas_id = e.id
-    ORDER BY a.id DESC 
-    LIMIT 5
-  `).all();
-
-  // Kembalikan semua data dalam satu paket objek
-  return {
-    totalArsip,
-    totalSuratKeluar,
-    totalSuratMasuk,
-    totalEntitas,
-    logTerbaru
-  };
-});
-// -- Handler Pilih dan Salin Berkas Fisik (PDF / Gambar) --
-ipcMain.handle('dialog:pilihFile', async () => {
-  // 1. Buka jendela dialog pemilihan file
+ipcMain.handle('dialog:pilihFolder', async () => {
   const result = await dialog.showOpenDialog({
-    title: 'Pilih Berkas Arsip Fisik',
-    properties: ['openFile'],
-    filters: [
-      { name: 'Dokumen & Gambar', extensions: ['pdf', 'jpg', 'jpeg', 'png'] }
-    ]
+    properties: ['openDirectory', 'createDirectory']
   });
+  return result.canceled ? null : result.filePaths[0];
+});
 
-  // Jika batal memilih file
-  if (result.canceled || result.filePaths.length === 0) {
-    return null; 
-  }
-
-  // 2. Siapkan Folder "Brankas" di data lokal aplikasi
-  const folderArsip = path.join(app.getPath('userData'), 'Berkas_Arsip');
-  if (!fs.existsSync(folderArsip)) {
-    fs.mkdirSync(folderArsip, { recursive: true }); // Buat folder jika belum ada
-  }
-
-  // 3. Proses penyalinan file
-  const sourcePath = result.filePaths[0]; // Jalur file asli
-  const originalFileName = path.basename(sourcePath);
-  
-  // Menambahkan timestamp agar nama file unik (mencegah bentrok jika nama file sama)
-  const uniqueFileName = `${Date.now()}_${originalFileName}`;
-  const destPath = path.join(folderArsip, uniqueFileName); // Jalur brankas tujuan
-
+// IPC Handler untuk menyimpan file fisik dari Base64 (Untuk KOP SURAT & DOCX)
+ipcMain.handle('fs:saveFile', (event, { base64Data, filename, folder }) => {
   try {
-    fs.copyFileSync(sourcePath, destPath); // Salin file
+    if (!fs.existsSync(folder)) {
+      fs.mkdirSync(folder, { recursive: true });
+    }
+    const safeName = `${Date.now()}_${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const filePath = path.join(folder, safeName);
     
-    // Kembalikan nama file dan jalur simpannya ke React
-    return {
-      nama_file: originalFileName,
-      path_simpan: destPath
-    };
-  } catch (error) {
-    console.error("Gagal menyalin file:", error);
+    // Strip base64 header if exists (e.g. data:image/png;base64,)
+    const base64Content = base64Data.replace(/^data:([A-Za-z-+/]+);base64,/, '');
+    fs.writeFileSync(filePath, Buffer.from(base64Content, 'base64'));
+    
+    return filePath;
+  } catch (err) {
+    console.error("Save file error:", err);
     return null;
   }
 });
 
-// -- Handler Hapus Entitas --
-ipcMain.handle('db:hapusEntitas', (event, id) => {
-  const stmt = db.prepare('DELETE FROM entitas WHERE id = ?');
-  stmt.run(id);
+ipcMain.handle('server:toggle', (event, { enabled, port }) => {
+  stopExpressServer();
+  startExpressServer(port); // startExpressServer will now check DB and bind to 0.0.0.0 or 127.0.0.1
   return true;
 });
 
-// -- Handler Hapus Surat (Masuk & Keluar) beserta File Fisiknya --
-ipcMain.handle('db:hapusSurat', (event, id) => {
-  // 1. Cari tahu apakah surat ini punya file fisik
-  const surat = db.prepare('SELECT file_path FROM arsip_surat WHERE id = ?').get(id);
+ipcMain.handle('dialog:pilihFileRestore', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'SQLite Database', extensions: ['sqlite'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false };
   
-  // 2. Jika ada filenya, hapus file tersebut dari hardisk komputer
-  if (surat && surat.file_path) {
-    try {
-      if (fs.existsSync(surat.file_path)) {
-        fs.unlinkSync(surat.file_path);
-      }
-    } catch (err) {
-      console.error("Gagal menghapus file fisik:", err);
-    }
+  const selectedPath = result.filePaths[0];
+  try {
+    // Copy the selected file to override current dbPath
+    // In production, we should close DB first, copy, then restart app/db.
+    // For simplicity, we just copy over it (better-sqlite3 might throw if locked, but let's try)
+    fs.copyFileSync(selectedPath, dbPath);
+    return { success: true };
+  } catch (err) {
+    console.error(err);
+    return { success: false, error: err.message };
   }
+});
+
+ipcMain.handle('dialog:pilihFileDocx', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openFile'],
+    filters: [{ name: 'Word Document', extensions: ['docx'] }]
+  });
+  if (result.canceled || result.filePaths.length === 0) return { success: false };
   
-  // 3. Hapus data teksnya dari database SQLite
-  const stmt = db.prepare('DELETE FROM arsip_surat WHERE id = ?');
-  stmt.run(id);
-  return true;
+  const selectedPath = result.filePaths[0];
+  try {
+    const buffer = fs.readFileSync(selectedPath);
+    const base64 = buffer.toString('base64');
+    const name = path.basename(selectedPath);
+    
+    // Gunakan pizzip dan docxtemplater untuk ekstrak teks (lebih akurat untuk variabel {{}})
+    // Gunakan mammoth untuk preview agar kebal terhadap salah ketik (typo) kurung kurawal di Word
+    let text = "";
+    let htmlPreview = "";
+    try {
+      const mammoth = require('mammoth');
+      // Extract raw text for variables
+      const mammothResult = await mammoth.extractRawText({ buffer: buffer });
+      text = mammothResult.value;
+      
+      // Extract rough HTML for UI preview
+      const htmlResult = await mammoth.convertToHtml({ buffer: buffer });
+      htmlPreview = htmlResult.value;
+    } catch(err) {
+      console.error("Mammoth error in main:", err);
+      return { success: false, error: "Gagal membaca teks dari file Word." };
+    }
+    
+    return { success: true, name, base64, text, htmlPreview };
+  } catch (err) {
+    console.error(err);
+    return { success: false, error: err.message };
+  }
 });

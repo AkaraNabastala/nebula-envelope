@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+console.log("Preload script is executing!");
+
 // Mengekspos API khusus ke dalam global window object di React (window.api)
 contextBridge.exposeInMainWorld('api', {
   // ----------------------------------------------------
@@ -28,6 +30,11 @@ contextBridge.exposeInMainWorld('api', {
     return ipcRenderer.invoke('dialog:pilihFolder');
   }, // <--- Koma ini yang sebelumnya tertinggal
 
+  minimize: () => ipcRenderer.send('window:minimize'),
+  maximize: () => ipcRenderer.send('window:maximize'),
+  close: () => ipcRenderer.send('window:close'),
+  isElectron: true,
+
   // ----------------------------------------------------
   // 4. FUNGSI ARSIP SURAT MASUK & KATEGORI
   // ----------------------------------------------------
@@ -48,6 +55,12 @@ contextBridge.exposeInMainWorld('api', {
 
   pilihFileArsip: () => {
     return ipcRenderer.invoke('dialog:pilihFile');
+  },
+  pilihFileDocx: () => {
+    return ipcRenderer.invoke('dialog:pilihFileDocx');
+  },
+  pilihFileRestore: () => {
+    return ipcRenderer.invoke('dialog:pilihFileRestore');
   },
 
   // ----------------------------------------------------

@@ -5,19 +5,47 @@
   "type": "module",
   "main": "./public/system/main.cjs",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:start": "cross-env NODE_ENV=development electron ."
+    "electron:start": "cross-env NODE_ENV=development electron .",
+    "electron:build": "vite build && electron-builder"
+  },
+  "build": {
+    "appId": "com.sistemsurat.app",
+    "productName": "Sistem Surat",
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "files": [
+      "dist/**/*",
+      "public/system/**/*"
+    ]
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.2",
     "better-sqlite3": "^12.11.1",
+    "cors": "^2.8.5",
+    "docxtemplater": "^3.55.7",
+    "docxtemplater-image-module-free": "^1.1.1",
+    "express": "^4.21.2",
+    "file-saver": "^2.0.5",
+    "get-port": "^7.1.0",
+    "html-to-image": "^1.11.11",
+    "lucide-react": "^0.475.0",
+    "mammoth": "^1.8.0",
+    "pizzip": "^3.1.7",
+    "qrcode": "^1.5.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
-    "tailwindcss": "^4.3.2"
+    "recharts": "^2.12.7",
+    "tailwindcss": "^4.3.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.2",
@@ -27,6 +55,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "cross-env": "^10.1.0",
     "electron": "^41.7.1",
+    "electron-builder": "^25.1.8",
     "eslint": "^10.6.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",

@@ -24,3 +24,10 @@
 body {
   font-family: 'Poppins', sans-serif;
 }
+
+/* 4. Pola Latar Belakang (Background Pattern) */
+.bg-dot-pattern {
+  background-color: #f8fafc;
+  background-image: radial-gradient(#cbd5e1 1px, transparent 1px);
+  background-size: 20px 20px;
+}

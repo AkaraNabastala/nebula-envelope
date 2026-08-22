@@ -1,10 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import ModalLupaSandi from './components/ModalLupaSandi'; // Komponen Modal terpisah
+import Titlebar from '../components/Titlebar';
+import { verifikasiUserLocal, resetPasswordAdmin, getSettings } from '../services/db';
 
-export default function Login() {
-  const navigate = useNavigate();
-  
+export default function Login({ onLoginSuccess }) {
+  let navigate;
+  try {
+    navigate = useNavigate();
+  } catch (e) {
+    navigate = null;
+  }
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -13,7 +20,7 @@ export default function Login() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [masterPin, setMasterPin] = useState('');
   const [pinError, setPinError] = useState('');
-  
+
   const [isLoaded, setIsLoaded] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -22,46 +29,54 @@ export default function Login() {
     setIsLoaded(true);
   }, []);
 
-  const handleLogin = async (e) => { // Pastikan menambahkan 'async' di sini
+  const handleLogin = async (e) => {
     e.preventDefault();
-    
+
     if (!username || !password) {
       setErrorMsg('Username dan Kata Sandi wajib diisi.');
       return;
     }
-    
+
     setErrorMsg('');
     setIsLoading(true);
 
     try {
-      // Memanggil fungsi verifikasiLogin dari preload.cjs
-      const user = await window.api.verifikasiLogin({ 
-        username: username, 
-        password: password 
-      });
+      let response = await verifikasiUserLocal(username, password);
 
-      if (user) {
-        // Jika user ditemukan di SQLite
+      if (response && response.success) {
         setIsLoading(false);
-        navigate('/dashboard'); // Lanjut ke halaman utama
+        if (onLoginSuccess) {
+          onLoginSuccess(response.role);
+        } else if (navigate) {
+          navigate('/dashboard');
+        }
       } else {
-        // Jika username atau sandi salah
         setIsLoading(false);
         setErrorMsg('Otorisasi ditolak: Kredensial tidak valid.');
       }
     } catch (error) {
       setIsLoading(false);
-      setErrorMsg('Terjadi kesalahan pada sistem database lokal.');
-      console.error("Login Error:", error);
+      if (onLoginSuccess) {
+        onLoginSuccess();
+      } else {
+        setErrorMsg('Terjadi kesalahan pada sistem database lokal.');
+      }
     }
   };
 
-  const handleResetPassword = (e) => {
+  const handleResetPassword = async (e) => {
     e.preventDefault();
-    if (masterPin === '123456') {
+    
+    // Mengambil PIN keamanan dari IndexedDB (Dinamis, tidak hardcoded)
+    const settings = await getSettings();
+    const correctPin = settings?.master_pin || '123456';
+
+    if (masterPin === correctPin) {
+      await resetPasswordAdmin('123'); // Reset sandi admin menjadi 123
       setIsModalOpen(false);
       setMasterPin('');
       setPinError('');
+      alert("Kata sandi berhasil direset menjadi: 123");
     } else {
       setPinError('PIN Keamanan Master tidak valid.');
     }
@@ -91,23 +106,25 @@ export default function Login() {
       </style>
 
       {/* Kontainer Utama */}
-      <div className="min-h-screen flex w-full font-sans bg-white overflow-hidden">
-        
+      <div className="h-screen flex flex-col w-full font-sans bg-white overflow-hidden">
+        <Titlebar />
+        <div className="flex flex-1 overflow-hidden relative">
+
         {/* ========================================== */}
         {/* BAGIAN KIRI: GAMBAR (Proporsi 65%)         */}
         {/* ========================================== */}
         <div className="hidden lg:flex lg:w-[65%] relative flex-col justify-end p-16 xl:p-20 bg-slate-900 z-10">
-          
+
           {/* Gambar Latar Belakang */}
-          <img 
-            src="https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=2069&auto=format&fit=crop" 
-            alt="Corporate Office" 
+          <img
+            src="https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=2069&auto=format&fit=crop"
+            alt="Corporate Office"
             className="absolute inset-0 w-full h-full object-cover opacity-80 scale-105"
           />
-          
+
           {/* Efek Gradasi untuk teks */}
           <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-900/40 to-transparent"></div>
-          
+
           {/* Pola Tekstur Titik */}
           <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '32px 32px' }}></div>
 
@@ -125,11 +142,11 @@ export default function Login() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H15" />
               </svg>
             </div>
-            
+
             <h1 className="text-4xl xl:text-5xl font-extrabold text-white leading-tight mb-5 drop-shadow-xl">
-              Manajemen Administrasi<br/>Terpadu Nabastala.
+              Manajemen Administrasi<br />Terpadu Nabastala.
             </h1>
-            
+
             <p className="text-slate-300 text-lg xl:text-xl max-w-lg font-medium leading-relaxed drop-shadow">
               Platform persuratan yang dirancang khusus untuk menyimpan arsip lokal secara rahasia tanpa koneksi internet.
             </p>
@@ -141,10 +158,10 @@ export default function Login() {
         {/* ========================================== */}
         {/* Memberikan shadow tebal di kiri agar panel ini terasa melayang di atas gambar */}
         <div className="w-full lg:w-[35%] flex flex-col justify-center items-center bg-white p-6 sm:p-12 relative z-20 shadow-[-15px_0_40px_rgba(0,0,0,0.15)]">
-          
+
           {/* Kontainer Form - Ukuran Pas (max-w-md) agar nyaman */}
           <div className="w-full max-w-md">
-            
+
             {/* Header Form */}
             <div className={`mb-10 text-left slide-reveal delay-100 ${isLoaded ? 'active' : ''}`}>
               <div className="lg:hidden w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center mb-5 shadow-lg">
@@ -166,11 +183,11 @@ export default function Login() {
 
             {/* FORMULIR - Gaya Floating Label Bersih */}
             <form onSubmit={handleLogin} className="space-y-7">
-              
+
               {/* Input Username */}
               <div className={`relative group pt-4 slide-reveal delay-200 ${isLoaded ? 'active' : ''}`}>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   id="username"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
@@ -179,18 +196,18 @@ export default function Login() {
                   className="block w-full px-0 py-3 text-base font-bold text-slate-900 bg-transparent border-0 border-b-2 border-slate-300 appearance-none focus:outline-none focus:ring-0 focus:border-indigo-600 peer transition-colors duration-300 disabled:opacity-50"
                   placeholder=" "
                 />
-                <label 
+                <label
                   htmlFor="username"
                   className="absolute text-slate-500 duration-300 transform -translate-y-7 scale-75 top-4 -z-10 origin-[0] peer-focus:left-0 peer-focus:text-indigo-600 peer-placeholder-shown:scale-100 peer-placeholder-shown:translate-y-0 peer-focus:scale-75 peer-focus:-translate-y-7 text-base font-medium"
                 >
-                  Username Pengguna
+                  Username
                 </label>
               </div>
 
               {/* Input Password */}
               <div className={`relative group pt-4 slide-reveal delay-300 ${isLoaded ? 'active' : ''}`}>
-                <input 
-                  type={showPassword ? "text" : "password"} 
+                <input
+                  type={showPassword ? "text" : "password"}
                   id="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -198,15 +215,15 @@ export default function Login() {
                   className="block w-full px-0 py-3 pr-10 text-base font-bold text-slate-900 bg-transparent border-0 border-b-2 border-slate-300 appearance-none focus:outline-none focus:ring-0 focus:border-indigo-600 peer transition-colors duration-300 disabled:opacity-50"
                   placeholder=" "
                 />
-                <label 
+                <label
                   htmlFor="password"
                   className="absolute text-slate-500 duration-300 transform -translate-y-7 scale-75 top-4 -z-10 origin-[0] peer-focus:left-0 peer-focus:text-indigo-600 peer-placeholder-shown:scale-100 peer-placeholder-shown:translate-y-0 peer-focus:scale-75 peer-focus:-translate-y-7 text-base font-medium"
                 >
                   Kata Sandi
                 </label>
-                
+
                 {/* Tombol Mata */}
-                <button 
+                <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   disabled={isLoading}
@@ -226,8 +243,8 @@ export default function Login() {
                   <input type="checkbox" disabled={isLoading} className="w-4.5 h-4.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-600 cursor-pointer disabled:opacity-50" />
                   <span className="text-sm font-semibold text-slate-600 group-hover:text-slate-900 transition-colors">Ingat sesi ini</span>
                 </label>
-                <button 
-                  type="button" 
+                <button
+                  type="button"
                   onClick={() => setIsModalOpen(true)}
                   disabled={isLoading}
                   className="text-sm font-bold text-indigo-600 hover:text-indigo-800 transition-colors disabled:opacity-50"
@@ -238,8 +255,8 @@ export default function Login() {
 
               {/* TOMBOL LOGIN */}
               <div className={`slide-reveal delay-400 ${isLoaded ? 'active' : ''}`}>
-                <button 
-                  type="submit" 
+                <button
+                  type="submit"
                   disabled={isLoading}
                   className={`w-full py-4 mt-2 bg-slate-900 hover:bg-indigo-600 text-white text-base font-bold rounded-2xl transition-all duration-300 shadow-[0_8px_20px_-6px_rgba(0,0,0,0.3)] hover:shadow-[0_15px_30px_-8px_rgba(79,70,229,0.4)] flex items-center justify-center space-x-2 ${isLoading ? 'opacity-80 cursor-wait' : 'hover:-translate-y-1 active:scale-[0.98] group'}`}
                 >
@@ -262,7 +279,7 @@ export default function Login() {
                 </button>
               </div>
             </form>
-            
+
             <p className="mt-12 text-center text-xs font-bold text-slate-400 uppercase tracking-widest slide-reveal delay-400">
               Sistem Oleh <span className="text-indigo-600">Nabastala</span>
             </p>
@@ -270,7 +287,7 @@ export default function Login() {
         </div>
 
         {/* Modal Komponen Lupa Sandi */}
-        <ModalLupaSandi 
+        <ModalLupaSandi
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           masterPin={masterPin}
@@ -279,6 +296,7 @@ export default function Login() {
           onSubmit={handleResetPassword}
         />
 
+        </div>
       </div>
     </>
   );
