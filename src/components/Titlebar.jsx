@@ -1,7 +1,8 @@
 import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
+import LogoNebula from '../assets/logonebula.png';
 
-export default function Titlebar() {
+export default function Titlebar({ settings }) {
   return (
     <div 
       className="h-8 w-full bg-slate-900 flex items-center justify-between shrink-0 select-none z-[100] relative"
@@ -9,10 +10,14 @@ export default function Titlebar() {
     >
       {/* Kiri: Judul / Logo */}
       <div className="flex items-center px-4 gap-2 text-slate-400">
-        <svg className="w-4 h-4 text-indigo-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H15" />
-        </svg>
-        <span className="text-[11px] font-bold tracking-widest uppercase">Sistem Surat Universal</span>
+        <img 
+          src={settings?.logo_base64 || LogoNebula} 
+          alt="Logo" 
+          className="w-4 h-4 object-contain"
+        />
+        <span className="text-[11px] font-bold tracking-widest uppercase">
+          Nebula Envelope
+        </span>
       </div>
 
       {/* Kanan: Kontrol Window */}

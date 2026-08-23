@@ -1,9 +1,11 @@
 import React, { useState, useRef } from 'react';
-import { saveIncomingArchive, deleteIncomingArchive, deleteOutgoingLetter, updateOutgoingStatus } from '../services/db';
-import { Archive, Plus, Upload, FileText, Folder, Eye, Search, Filter, Trash2, Edit2, Download, Send } from 'lucide-react';
+import { saveIncomingArchive, deleteIncomingArchive, deleteOutgoingLetter, updateOutgoingStatus, triggerReload, triggerToast, API_BASE_URL } from '../services/db';
+import { Archive, Plus, Upload, FileText, Folder, Eye, Search, Filter, CheckSquare, Trash, Trash2, Edit2, Download, Send, Printer, AlertTriangle, X, Check } from 'lucide-react';
+import { toast } from 'sonner';
+import * as XLSX from 'xlsx';
 
 export default function ArchiveLetters({ incomingArchives, outgoingLetters, settings, onArchiveAdded, onViewDocument, onOpenFolderPicker }) {
-  const [activeSubTab, setActiveSubTab] = useState('masuk'); // 'masuk' atau 'keluar'
+  const [activeSubTab, setActiveSubTab] = useState('keluar'); // 'masuk' atau 'keluar'
   
   // State Form Modal Tambah Arsip Masuk
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -17,8 +19,98 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
   const [fileName, setFileName] = useState('');
   const [fileBase64, setFileBase64] = useState('');
   const [isDragging, setIsDragging] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', desc: '', actionLabel: '', onConfirm: null, type: 'danger' });
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  
+  const activeItems = (activeSubTab === 'masuk' ? incomingArchives : outgoingLetters)
+    .filter(item => {
+      if (!searchQuery) return true;
+      const lowerQuery = searchQuery.toLowerCase();
+      return (
+        (item.nomor_surat && item.nomor_surat.toLowerCase().includes(lowerQuery)) ||
+        (item.pengirim && item.pengirim.toLowerCase().includes(lowerQuery)) ||
+        (item.penerima && item.penerima.toLowerCase().includes(lowerQuery)) ||
+        (item.perihal && item.perihal.toLowerCase().includes(lowerQuery))
+      );
+    });
+
+  React.useEffect(() => {
+    setSelectedIds([]);
+  }, [activeSubTab]);
+
+  const toggleSelectAll = (e, items) => {
+    if (e.target.checked) {
+      setSelectedIds(items.map(item => item.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  const toggleSelectOne = (id) => {
+    if (selectedIds.includes(id)) {
+      setSelectedIds(selectedIds.filter(itemId => itemId !== id));
+    } else {
+      setSelectedIds([...selectedIds, id]);
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedIds.length === 0) return;
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: `Hapus ${selectedIds.length} arsip terpilih?`,
+      desc: 'Dokumen digital di sistem maupun file fisik di komputer Anda akan terhapus secara permanen (tidak dapat dibatalkan).',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Arsip', subtitle: 'Sedang membersihkan file dari sistem...' } }));
+        try {
+          await new Promise(r => setTimeout(r, 1200)); // Simulasi delay agar animasi terlihat
+          for (const id of selectedIds) {
+            const item = activeItems.find(i => i.id === id);
+            if (item) {
+              if (activeSubTab === 'masuk') await deleteIncomingArchive(id);
+              else await deleteOutgoingLetter(id);
+              
+              if (window.api && window.api.hapusSuratFisik && item.file_path) {
+                await window.api.hapusSuratFisik(item.file_path);
+              }
+            }
+          }
+          setSelectedIds([]);
+          if (onArchiveAdded) onArchiveAdded();
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => triggerToast('Berhasil!', `${selectedIds.length} surat berhasil dihapus permanen`), 300);
+        } catch (error) {
+          console.error(error);
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => toast.error('Gagal menghapus beberapa surat'), 300);
+        }
+      }
+    });
+  };
   
   const fileInputRef = useRef(null);
+
+  const formatTanggal = (isoString) => {
+    if (!isoString) return '-';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return isoString;
+      
+      const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = months[d.getMonth()];
+      const year = d.getFullYear();
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      
+      return `${day} ${month} ${year} - ${hours}:${minutes}`;
+    } catch (e) {
+      return isoString;
+    }
+  };
 
   const resetForm = () => {
     setNomorSurat('');
@@ -47,26 +139,43 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (item, tipe) => {
-    if (window.confirm(`PERINGATAN!\n\nApakah Anda yakin ingin menghapus surat nomor: ${item.nomor_surat}?\nJika Anda menjalankan aplikasi via Launcher (Desktop), file fisiknya di hardisk juga dapat ikut terhapus.`)) {
-      if (tipe === 'masuk') {
-        await deleteIncomingArchive(item.id);
-      } else {
-        await deleteOutgoingLetter(item.id);
+  const handleDelete = (item, tipe) => {
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: `Hapus permanen surat ${item.nomor_surat}?`,
+      desc: 'Dokumen digital di sistem maupun file fisik di komputer Anda akan terhapus secara permanen (tidak dapat dibatalkan).',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Arsip', subtitle: 'Sedang membersihkan file dari sistem...' } }));
+        try {
+          await new Promise(r => setTimeout(r, 1200)); // Simulasi delay agar animasi terlihat
+          if (tipe === 'masuk') {
+            await deleteIncomingArchive(item.id);
+          } else {
+            await deleteOutgoingLetter(item.id);
+          }
+          
+          if (window.api && window.api.hapusSuratFisik && item.file_path) {
+            await window.api.hapusSuratFisik(item.file_path);
+          }
+          setSelectedIds(prev => prev.filter(id => id !== item.id));
+          if (onArchiveAdded) onArchiveAdded();
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => triggerToast('Berhasil!', 'Arsip berhasil dihapus'), 300);
+        } catch (error) {
+          console.error(error);
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => toast.error('Gagal menghapus surat'), 300);
+        }
       }
-      
-      // Attempt to physically delete if in Electron
-      if (window.electronAPI && window.electronAPI.hapusSuratFisik) {
-        // Assuming we could pass path to backend to delete. 
-        // For now, the DB deletion is enough for the prototype.
-      }
-      
-      if (onArchiveAdded) onArchiveAdded();
-    }
+    });
   };
 
   const handleEditKeluar = (item) => {
-    alert("Surat Keluar ini sudah diregistrasi & dicetak.\n\nUntuk mengubah isinya, Anda disarankan untuk membuat surat baru di menu 'Buat Surat Baru' menggunakan nomor revisi.");
+    toast.info("Gunakan menu Buat Surat Baru", {
+      description: "Surat Keluar ini sudah diregistrasi & dicetak. Untuk mengubah isinya, Anda disarankan membuat surat baru dengan nomor revisi."
+    });
   };
 
   const handleFileChange = (file) => {
@@ -104,15 +213,15 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
 
     const folderTarget = settings?.folder_surat_masuk || 'D:/data/surat/masuk';
 
-    if (fileBase64 && window.electronAPI && window.electronAPI.saveFile) {
-      const saveRes = await window.electronAPI.saveFile({
+    if (fileBase64 && window.api && window.api.saveFile) {
+      const saveRes = await window.api.saveFile({
         folderPath: folderTarget,
         fileName: fileName,
         fileData: fileBase64,
         isBase64: true
       });
       if (!saveRes.success) {
-        alert("Gagal menyimpan file fisik: " + saveRes.error);
+        toast.error("Gagal menyimpan file fisik", { description: saveRes.error });
         return;
       }
     }
@@ -124,47 +233,228 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
       perihal: perihal,
       tanggal_diterima: tanggalDiterima,
       file_name: fileName || 'Tidak ada lampiran fisik',
-      folder_tersimpan: folderTarget
+      folder_tersimpan: folderTarget,
+      file_path: fileName ? `${folderTarget}\\${fileName}`.replace(/\\\\/g, '\\') : ''
     };
 
     await saveIncomingArchive(archiveData);
     if (onArchiveAdded) onArchiveAdded();
     setIsModalOpen(false);
     resetForm();
+    toast.success('Berhasil!', { description: 'Arsip masuk berhasil disimpan!' });
   };
 
-  const handleExportCSV = () => {
+  const handleConvertPdf = (item) => {
+    if (!item.file_path) {
+      return toast.error('File tidak ditemukan', { description: 'Tidak dapat menemukan path file dokumen asli.'});
+    }
+    
+    setConfirmConfig({
+      isOpen: true,
+      type: 'info',
+      title: 'Konversi ke PDF (Otomatis)',
+      desc: `Sistem akan menggunakan ConvertAPI atau iLovePDF secara otomatis. Kuota gratis mungkin terpakai. Apakah Anda yakin ingin mengonversi file ${item.nomor_surat} sekarang?`,
+      actionLabel: 'Konversi',
+      onConfirm: async () => {
+        // Menggunakan Production Token yang diberikan user sebelumnya
+        const secretKey = "LkAHyYTrm2Ef800RLFyoYYlqlmnRF6Uj";
+
+        const loadingToast = toast.loading('Mengunduh & mengonversi dokumen...', { description: 'Menghubungkan ke ConvertAPI...' });
+        try {
+          // 1. Dapatkan file aslinya dari server lokal
+          const localFileRes = await fetch(`${API_BASE_URL}/download?path=${encodeURIComponent(item.file_path)}`);
+          if (!localFileRes.ok) throw new Error("Gagal membaca dokumen asli dari penyimpanan.");
+          const fileBlob = await localFileRes.blob();
+
+          // 2. Siapkan request FormData untuk ConvertAPI
+          const formData = new FormData();
+          formData.append('File', fileBlob, item.file_name || 'surat.docx');
+          formData.append('StoreFile', 'true');
+
+          // 3. Tembak langsung ke server ConvertAPI
+          const convertRes = await fetch('https://v2.convertapi.com/convert/docx/to/pdf', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${secretKey}`
+            },
+            body: formData
+          });
+
+          if (!convertRes.ok) {
+            const errData = await convertRes.json();
+            throw new Error(errData.Message || 'Konversi ditolak oleh server ConvertAPI.');
+          }
+
+          const result = await convertRes.json();
+          if (result.Files && result.Files.length > 0) {
+            const pdfUrl = result.Files[0].Url;
+            
+            // 4. Unduh hasil PDF-nya
+            const pdfRes = await fetch(pdfUrl);
+            const pdfBlob = await pdfRes.blob();
+            const reader = new FileReader();
+            reader.readAsDataURL(pdfBlob);
+            reader.onloadend = async () => {
+              const base64data = reader.result.split(',')[1];
+              let baseName = item.nomor_surat ? item.nomor_surat.replace(/\//g, '_') : 'Dokumen';
+              if (item.file_name && item.file_name.includes('.docx')) {
+                 baseName = item.file_name.replace('.docx', '');
+              }
+              const finalFileName = `${baseName}.pdf`;
+
+              if (window.api && window.api.saveFile) {
+                await window.api.saveFile({
+                  folderPath: item.folder_tersimpan,
+                  fileName: finalFileName,
+                  fileData: base64data,
+                  isBase64: true
+                });
+                
+                // Update DB record
+                const endpoint = activeSubTab === 'masuk' ? `/api/incoming/${item.id}/file` : `/api/outgoing/${item.id}/file`;
+                await fetch(`${API_BASE_URL}${endpoint}`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    file_name: finalFileName,
+                    file_path: `${item.folder_tersimpan}\\${finalFileName}`.replace(/\\\\/g, '\\')
+                  })
+                });
+
+                toast.dismiss(loadingToast);
+                toast.success('Berhasil Dikonversi & Disimpan!', { description: `File ${finalFileName} berhasil disimpan dan database diperbarui.` });
+                
+                // Panggil onArchiveAdded agar data refresh dan icon cetak bisa muncul
+                if (onArchiveAdded) onArchiveAdded();
+              } else {
+                toast.dismiss(loadingToast);
+                toast.error("Fitur simpan otomatis hanya tersedia di aplikasi Desktop.");
+              }
+            };
+          } else {
+            throw new Error("Respon ConvertAPI tidak valid.");
+          }
+        } catch (e) {
+          // If ConvertAPI fails, try iLovePDF as fallback
+          toast.loading('Beralih ke server iLovePDF...', { id: loadingToast, description: e.message || 'ConvertAPI limit habis.' });
+          
+          try {
+            // 1. Auth iLovePDF
+            const authRes = await fetch('https://api.ilovepdf.com/v1/auth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ public_key: "project_public_40ec1e05463881f6477d1f817c674fbe_dFGQ268950a1bed992ef196bf8df48a669958" })
+            });
+            if (!authRes.ok) throw new Error("Gagal otentikasi iLovePDF.");
+            const authData = await authRes.json();
+            const token = authData.token;
+
+            // 2. Start Task
+            const startRes = await fetch('https://api.ilovepdf.com/v1/start/officepdf', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!startRes.ok) throw new Error("Gagal memulai task iLovePDF.");
+            const startData = await startRes.json();
+            const server = startData.server;
+            const taskId = startData.task;
+
+            // 3. Upload File
+            const localFileRes2 = await fetch(`${API_BASE_URL}/download?path=${encodeURIComponent(item.file_path)}`);
+            const fileBlob2 = await localFileRes2.blob();
+            
+            const uploadForm = new FormData();
+            uploadForm.append('task', taskId);
+            uploadForm.append('file', fileBlob2, item.file_name || 'surat.docx');
+            
+            const uploadRes = await fetch(`https://${server}/v1/upload`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: uploadForm
+            });
+            if (!uploadRes.ok) throw new Error("Gagal mengunggah file ke iLovePDF.");
+            const uploadData = await uploadRes.json();
+            const serverFilename = uploadData.server_filename;
+
+            // 4. Process
+            const processRes = await fetch(`https://${server}/v1/process`, {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    task: taskId,
+                    tool: 'officepdf',
+                    files: [{ server_filename: serverFilename, filename: item.file_name || 'surat.docx' }]
+                })
+            });
+            if (!processRes.ok) throw new Error("Gagal memproses PDF di iLovePDF.");
+
+            // 5. Download
+            const downloadRes = await fetch(`https://${server}/v1/download/${taskId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!downloadRes.ok) throw new Error("Gagal mengunduh PDF dari iLovePDF.");
+            
+            const pdfBlob = await downloadRes.blob();
+            const reader2 = new FileReader();
+            reader2.readAsDataURL(pdfBlob);
+            reader2.onloadend = async () => {
+              const base64data = reader2.result.split(',')[1];
+              let baseName = item.nomor_surat ? item.nomor_surat.replace(/\//g, '_') : 'Dokumen';
+              if (item.file_name && item.file_name.includes('.docx')) {
+                 baseName = item.file_name.replace('.docx', '');
+              }
+              const finalFileName = `${baseName}.pdf`;
+
+              if (window.api && window.api.saveFile) {
+                await window.api.saveFile({
+                  folderPath: item.folder_tersimpan,
+                  fileName: finalFileName,
+                  fileData: base64data,
+                  isBase64: true
+                });
+                
+                toast.dismiss(loadingToast);
+                toast.success('Berhasil Dikonversi!', { description: 'Dokumen berhasil dikonversi via iLovePDF (Fallback) dan disimpan.' });
+                if (onArchiveAdded) onArchiveAdded();
+              } else {
+                toast.dismiss(loadingToast);
+                toast.error("Fitur simpan otomatis hanya tersedia di aplikasi Desktop.");
+              }
+            };
+          } catch (e2) {
+             toast.dismiss(loadingToast);
+             toast.error("Gagal Konversi Menyeluruh", { description: "ConvertAPI & iLovePDF gagal atau kehabisan limit." });
+          }
+        }
+      }
+    });
+  };
+
+  const handleExportXLSX = () => {
     let data = [];
     let headers = [];
     let filename = '';
 
     if (activeSubTab === 'masuk') {
       headers = ['Nomor Surat', 'Pengirim', 'Perihal', 'Tanggal Diterima', 'File Lampiran', 'Lokasi Folder'];
-      data = (incomingArchives||[]).map(item => [
-        item.nomor_surat, item.pengirim, item.perihal, item.tanggal_diterima, item.file_name, item.folder_tersimpan
-      ]);
-      filename = 'Rekap_Surat_Masuk.csv';
+      data = (incomingArchives||[]).map(item => ({
+        'Nomor Surat': item.nomor_surat, 'Pengirim': item.pengirim, 'Perihal': item.perihal, 'Tanggal Diterima': item.tanggal_diterima, 'File Lampiran': item.file_name, 'Lokasi Folder': item.folder_tersimpan
+      }));
+      filename = 'Rekap_Surat_Masuk.xlsx';
     } else {
       headers = ['Nomor Surat', 'Template', 'Perihal', 'Tanggal Dibuat', 'Status', 'File Lampiran', 'Lokasi Folder'];
-      data = (outgoingLetters||[]).map(item => [
-        item.nomor_surat, item.nama_template, item.perihal || item.formData?.perihal || '-', item.created_at, item.status, item.nama_file, item.folder_tersimpan
-      ]);
-      filename = 'Rekap_Surat_Keluar.csv';
+      data = (outgoingLetters||[]).map(item => ({
+        'Nomor Surat': item.nomor_surat, 'Template': item.nama_template, 'Perihal': item.perihal || item.formData?.perihal || '-', 'Tanggal Dibuat': item.created_at, 'Status': item.status, 'File Lampiran': item.nama_file, 'Lokasi Folder': item.folder_tersimpan
+      }));
+      filename = 'Rekap_Surat_Keluar.xlsx';
     }
 
-    const csvContent = [
-      headers.join(','),
-      ...data.map(row => row.map(cell => `"${String(cell || '').replace(/"/g, '""')}"`).join(','))
-    ].join('\n');
-
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Rekap");
+    XLSX.writeFile(workbook, filename);
   };
 
   const handleToggleStatus = async (item) => {
@@ -198,27 +488,45 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={handleExportCSV}
-              className="px-4 py-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm transition-all"
-            >
-              <Download size={16} />
-              Export
-            </button>
-            {activeSubTab === 'masuk' && (
-              <button
-                onClick={handleOpenModalBaru}
-                className="px-5 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-emerald-500/25 transition-all hover:-translate-y-1 active:scale-[0.98]"
-              >
-                <Plus size={18} />
-                Arsip Masuk Baru
-              </button>
-            )}
+            {/* Action buttons moved to table toolbar */}
           </div>
         </div>
 
         {/* Ultra-Premium Tab Switcher */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6 shrink-0">
+          
+          {/* Tab Surat Keluar */}
+          <div 
+            onClick={() => setActiveSubTab('keluar')}
+            className={`cursor-pointer rounded-2xl p-5 transition-all duration-500 relative overflow-hidden group ${
+              activeSubTab === 'keluar'
+                ? 'bg-gradient-to-br from-slate-900 to-slate-800 shadow-xl shadow-slate-900/30 scale-[1.02] border border-slate-700'
+                : 'bg-white/60 hover:bg-white border border-slate-200/50 hover:shadow-lg hover:shadow-slate-200/50'
+            }`}
+          >
+            <div className={`absolute -right-6 -top-6 transition-transform duration-700 ${activeSubTab === 'keluar' ? 'rotate-12 scale-110 opacity-10' : 'opacity-5 group-hover:rotate-12 group-hover:scale-110'}`}>
+              <FileText size={100} className={activeSubTab === 'keluar' ? 'text-indigo-400' : 'text-slate-900'} />
+            </div>
+
+            <div className="relative z-10">
+              <div className="flex justify-between items-start mb-4">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-inner transition-colors ${
+                  activeSubTab === 'keluar' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  <FileText size={20} />
+                </div>
+                <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${
+                  activeSubTab === 'keluar' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-100 text-slate-500'
+                }`}>Surat Keluar</span>
+              </div>
+              <h3 className={`text-3xl font-black mb-1 tabular-nums tracking-tighter ${activeSubTab === 'keluar' ? 'text-white' : 'text-slate-800'}`}>
+                {outgoingLetters?.length || 0}
+              </h3>
+              <p className={`text-xs font-bold ${activeSubTab === 'keluar' ? 'text-slate-400' : 'text-slate-500'}`}>
+                Dokumen Teregistrasi
+              </p>
+            </div>
+          </div>
           
           {/* Tab Arsip Masuk */}
           <div 
@@ -252,61 +560,55 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
               </p>
             </div>
           </div>
-
-          {/* Tab Surat Keluar */}
-          <div 
-            onClick={() => setActiveSubTab('keluar')}
-            className={`cursor-pointer rounded-2xl p-5 transition-all duration-500 relative overflow-hidden group ${
-              activeSubTab === 'keluar'
-                ? 'bg-gradient-to-br from-slate-900 to-slate-800 shadow-xl shadow-slate-900/30 scale-[1.02] border border-slate-700'
-                : 'bg-white/60 hover:bg-white border border-slate-200/50 hover:shadow-lg hover:shadow-slate-200/50'
-            }`}
-          >
-            <div className={`absolute -right-6 -top-6 transition-transform duration-700 ${activeSubTab === 'keluar' ? 'rotate-12 scale-110 opacity-10' : 'opacity-5 group-hover:rotate-12 group-hover:scale-110'}`}>
-              <FileText size={100} className={activeSubTab === 'keluar' ? 'text-indigo-400' : 'text-slate-900'} />
-            </div>
-
-            <div className="relative z-10">
-              <div className="flex justify-between items-start mb-4">
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shadow-inner transition-colors ${
-                  activeSubTab === 'keluar' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  <FileText size={20} />
-                </div>
-                <span className={`text-[10px] font-black uppercase tracking-widest px-3 py-1 rounded-full ${
-                  activeSubTab === 'keluar' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-100 text-slate-500'
-                }`}>Surat Keluar</span>
-              </div>
-              <h3 className={`text-3xl font-black mb-1 tabular-nums tracking-tighter ${activeSubTab === 'keluar' ? 'text-white' : 'text-slate-800'}`}>
-                {outgoingLetters?.length || 0}
-              </h3>
-              <p className={`text-xs font-bold ${activeSubTab === 'keluar' ? 'text-slate-400' : 'text-slate-500'}`}>
-                Dokumen Teregistrasi
-              </p>
-            </div>
-          </div>
         </div>
 
         {/* Table Area */}
         <div className="flex-1 bg-white/60 rounded-3xl border border-slate-200/50 flex flex-col overflow-hidden shadow-inner">
-          <div className="p-4 border-b border-slate-200/50 flex items-center justify-between bg-white/40">
+          <div className="p-4 border-b border-slate-200/50 flex flex-wrap items-center justify-between bg-white/40 gap-4">
             <div className="relative w-64">
               <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input type="text" placeholder="Cari arsip..." className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 focus:bg-white transition-all shadow-inner" />
+              <input type="text" placeholder="Cari arsip..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 focus:bg-white transition-all shadow-inner" />
             </div>
-            <button className="p-2 text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors">
-              <Filter size={18} />
-            </button>
+            
+            <div className="flex flex-wrap items-center gap-3">
+              {selectedIds.length > 0 && (
+                <button
+                  onClick={handleDeleteSelected}
+                  className="px-4 py-2 bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm transition-all border border-rose-200"
+                >
+                  <Trash2 size={16} />
+                  Hapus ({selectedIds.length})
+                </button>
+              )}
+              <button
+                onClick={handleExportXLSX}
+                className="px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm transition-all"
+              >
+                <Download size={16} />
+                Export
+              </button>
+              {activeSubTab === 'masuk' && (
+                <button
+                  onClick={handleOpenModalBaru}
+                  className="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-white rounded-xl font-bold text-xs flex items-center gap-2 shadow-md shadow-emerald-500/25 transition-all"
+                >
+                  <Plus size={16} />
+                  Arsip
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
             <table className="w-full text-left whitespace-nowrap">
               <thead className="sticky top-0 bg-white/95 backdrop-blur-md z-10 shadow-sm rounded-xl">
                 <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  <th className="px-6 py-4 rounded-l-xl">Nomor Surat</th>
-                  <th className="px-6 py-4">{activeSubTab === 'masuk' ? 'Pengirim' : 'Template & Status'}</th>
+                  <th className="px-6 py-4 rounded-l-xl w-10">
+                    <input type="checkbox" onChange={(e) => toggleSelectAll(e, activeItems)} checked={activeItems && activeItems.length > 0 && selectedIds.length === activeItems.length} className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 cursor-pointer" />
+                  </th>
+                  <th className="px-6 py-4">Nomor Surat</th>
                   <th className="px-6 py-4">Perihal</th>
-                  <th className="px-6 py-4">Lokasi Arsip</th>
+                  <th className="px-6 py-4">Tanggal Pembuatan</th>
                   <th className="px-6 py-4 text-right rounded-r-xl">Aksi</th>
                 </tr>
               </thead>
@@ -316,46 +618,54 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                     incomingArchives.map((item, idx) => (
                       <tr key={idx} className="hover:bg-white transition-colors group">
                         <td className="px-6 py-4">
+                          <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 cursor-pointer" />
+                        </td>
+                        <td className="px-6 py-4">
                           <span className="text-sm font-black text-slate-800">{item.nomor_surat}</span>
                         </td>
                         <td className="px-6 py-4">
-                          <span className="text-xs font-bold text-slate-600 px-3 py-1 bg-slate-100 rounded-lg">{item.pengirim}</span>
-                        </td>
-                        <td className="px-6 py-4">
                           <p className="text-sm font-bold text-slate-700 max-w-[200px] truncate">{item.perihal}</p>
-                          {item.file_name && item.file_name !== 'Tidak ada lampiran fisik' && (
-                            <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md mt-1.5 w-max font-bold border border-emerald-100">
-                              <FileText size={10} /> {item.file_name}
-                            </div>
-                          )}
                         </td>
                         <td className="px-6 py-4">
-                          <code className="px-2.5 py-1 bg-slate-50 text-slate-400 rounded-lg border border-slate-200 text-[10px] font-mono font-bold truncate max-w-[150px] inline-block">
-                            {item.folder_tersimpan || settings?.folder_surat_masuk}
-                          </code>
+                          <span className="text-xs font-bold text-slate-600">{formatTanggal(item.tanggal_diterima)}</span>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => onViewDocument(item)}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 hover:shadow-md transition-all"
-                              title="Buka Detail"
+                              onClick={() => {
+                                if (item.file_path && window.electronAPI && window.electronAPI.printDocx) {
+                                  window.electronAPI.printDocx(item.file_path);
+                                } else {
+                                  toast.error('Gagal: File tidak ditemukan atau fitur khusus Desktop.');
+                                }
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-100 hover:shadow-md transition-all"
+                              title="Buka Dokumen"
                             >
                               <Eye size={16} />
                             </button>
                             <button
-                              onClick={() => handleEditMasuk(item)}
+                              onClick={async () => {
+                                if (item.file_path && window.electronAPI && window.electronAPI.cetakSuratFisik) {
+                                  toast.info('Memproses Cetak...');
+                                  const res = await window.electronAPI.cetakSuratFisik(item.file_path);
+                                  if (res.success) toast.success('Berhasil!', { description: 'Dokumen dikirim ke Printer.' });
+                                  else toast.error('Gagal Cetak', { description: res.error });
+                                } else {
+                                  toast.error('Fitur cetak fisik tidak tersedia.');
+                                }
+                              }}
                               className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 hover:shadow-md transition-all"
-                              title="Edit Arsip"
+                              title="Cetak Langsung (Print)"
                             >
-                              <Edit2 size={15} />
+                              <Printer size={16} />
                             </button>
                             <button
-                              onClick={() => handleDelete(item, 'masuk')}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-100 hover:shadow-md transition-all"
-                              title="Hapus Permanen"
+                              onClick={() => handleConvertPdf(item)}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-100 hover:shadow-md transition-all font-black text-[9px]"
+                              title="Convert to PDF"
                             >
-                              <Trash2 size={15} />
+                              PDF
                             </button>
                           </div>
                         </td>
@@ -376,60 +686,54 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                     outgoingLetters.map((item, idx) => (
                       <tr key={idx} className="hover:bg-white transition-colors group">
                         <td className="px-6 py-4">
+                          <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} className="w-4 h-4 rounded text-indigo-500 focus:ring-indigo-500 cursor-pointer" />
+                        </td>
+                        <td className="px-6 py-4">
                           <span className="text-sm font-black text-slate-800">{item.nomor_surat}</span>
                         </td>
                         <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1.5">
-                            <span className="px-3 py-1 bg-indigo-50 text-indigo-700 rounded-lg text-[10px] font-black uppercase tracking-wider w-max">
-                              {item.nama_template || 'Surat Kustom'}
-                            </span>
-                            <span className={`px-2.5 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest w-max border ${item.status === 'Terkirim' ? 'bg-emerald-50 text-emerald-600 border-emerald-100' : 'bg-amber-50 text-amber-600 border-amber-100'}`}>
-                              {item.status || 'Draf'}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
                           <p className="text-sm font-bold text-slate-700 max-w-[200px] truncate">{item.perihal || item.formData?.perihal || '-'}</p>
-                          {item.nama_file && (
-                            <div className="flex items-center gap-1.5 text-[10px] text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md mt-1.5 w-max font-bold border border-indigo-100">
-                              <FileText size={10} /> {item.nama_file}
-                            </div>
-                          )}
                         </td>
                         <td className="px-6 py-4">
-                          <code className="px-2.5 py-1 bg-slate-50 text-slate-400 rounded-lg border border-slate-200 text-[10px] font-mono font-bold truncate max-w-[150px] inline-block">
-                            {item.folder_tersimpan || settings?.folder_surat_keluar}
-                          </code>
+                          <span className="text-xs font-bold text-slate-600">{formatTanggal(item.created_at)}</span>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              onClick={() => handleToggleStatus(item)}
-                              className={`inline-flex items-center justify-center w-8 h-8 rounded-xl ${item.status === 'Terkirim' ? 'bg-amber-50 text-amber-500 hover:bg-amber-100 hover:text-amber-600' : 'bg-emerald-50 text-emerald-500 hover:bg-emerald-100 hover:text-emerald-600'} hover:shadow-md transition-all`}
-                              title={item.status === 'Terkirim' ? 'Tandai sebagai Draf' : 'Tandai sebagai Terkirim'}
-                            >
-                              {item.status === 'Terkirim' ? <Archive size={16} /> : <Send size={16} />}
-                            </button>
-                            <button
-                              onClick={() => onViewDocument(item)}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 hover:shadow-md transition-all"
-                              title="Buka Surat"
+                              onClick={() => {
+                                if (item.file_path && window.electronAPI && window.electronAPI.printDocx) {
+                                  window.electronAPI.printDocx(item.file_path);
+                                } else {
+                                  toast.error('Gagal: File tidak ditemukan atau fitur khusus Desktop.');
+                                }
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-100 hover:shadow-md transition-all"
+                              title="Buka Dokumen"
                             >
                               <Eye size={16} />
                             </button>
                             <button
-                              onClick={() => handleEditKeluar(item)}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-orange-600 hover:bg-orange-100 hover:shadow-md transition-all"
-                              title="Edit Arsip"
+                              onClick={async () => {
+                                if (item.file_path && window.electronAPI && window.electronAPI.cetakSuratFisik) {
+                                  toast.info('Memproses Cetak...');
+                                  const res = await window.electronAPI.cetakSuratFisik(item.file_path);
+                                  if (res.success) toast.success('Berhasil!', { description: 'Dokumen dikirim ke Printer.' });
+                                  else toast.error('Gagal Cetak', { description: res.error });
+                                } else {
+                                  toast.error('Fitur cetak fisik tidak tersedia.');
+                                }
+                              }}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 hover:shadow-md transition-all"
+                              title="Cetak Langsung (Print)"
                             >
-                              <Edit2 size={15} />
+                              <Printer size={16} />
                             </button>
                             <button
-                              onClick={() => handleDelete(item, 'keluar')}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-100 hover:shadow-md transition-all"
-                              title="Hapus Permanen"
+                              onClick={() => handleConvertPdf(item)}
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-red-600 hover:bg-red-100 hover:shadow-md transition-all font-black text-[9px]"
+                              title="Convert to PDF"
                             >
-                              <Trash2 size={15} />
+                              PDF
                             </button>
                           </div>
                         </td>
@@ -569,6 +873,38 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
         </div>
       )}
 
+      {/* Confirmation Modal */}
+      {confirmConfig.isOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}></div>
+          <div className="relative bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 text-center animate-in fade-in zoom-in-95 duration-200">
+            <div className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4 ${confirmConfig.type === 'danger' ? 'bg-red-50 text-red-500 shadow-red-500/20' : 'bg-indigo-50 text-indigo-500 shadow-indigo-500/20'} shadow-lg`}>
+              {confirmConfig.type === 'danger' ? <AlertTriangle size={32} /> : <FileText size={32} />}
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">{confirmConfig.title}</h3>
+            <p className="text-sm font-medium text-slate-500 mb-8">{confirmConfig.desc}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center gap-2"
+              >
+                <X size={18} />
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  if (confirmConfig.onConfirm) confirmConfig.onConfirm();
+                  setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                }}
+                className={`flex-1 px-4 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 ${confirmConfig.type === 'danger' ? 'bg-red-500 hover:bg-red-600 shadow-red-500/30' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/30'}`}
+              >
+                {confirmConfig.type === 'danger' ? <Trash size={18} /> : <Check size={18} />}
+                {confirmConfig.actionLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

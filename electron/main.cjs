@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { exec } = require('child_process');
 
 let mainWindow;
 
@@ -16,6 +17,7 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false
+    },
     autoHideMenuBar: true,
     frame: false,
   });
@@ -79,10 +81,18 @@ ipcMain.handle('fs:saveFile', async (event, { folderPath, fileName, fileData, is
   }
 });
 
-// 3. Open Folder in Windows Explorer
+// 3. Open Folder or File in Windows
 ipcMain.handle('shell:openFolder', async (event, folderPath) => {
   if (fs.existsSync(folderPath)) {
     shell.openPath(folderPath);
+    return true;
+  }
+  return false;
+});
+
+ipcMain.handle('shell:openFile', async (event, filePath) => {
+  if (fs.existsSync(filePath)) {
+    shell.openPath(filePath);
     return true;
   }
   return false;
@@ -100,4 +110,19 @@ ipcMain.on('window:maximize', () => {
 });
 ipcMain.on('window:close', () => {
   if (mainWindow) mainWindow.close();
+});
+
+// 5. Print DOCX Natively via PowerShell (Windows only)
+ipcMain.on('print-docx', (event, filePath) => {
+    // Memanggil PowerShell di Windows untuk mencetak dokumen secara "Silent"
+    // Perintah ini akan menyuruh Windows mencetak menggunakan aplikasi default (MS Word)
+    const command = `powershell -command "Start-Process -FilePath '${filePath}' -Verb Print -PassThru | %{sleep 5;$_} | Stop-Process"`;
+    
+    exec(command, (error, stdout, stderr) => {
+        if (error) {
+            console.error(`Error printing DOCX: ${error.message}`);
+        } else {
+            console.log(`Print triggered for: ${filePath}`);
+        }
+    });
 });

@@ -1,13 +1,16 @@
 import React, { useState, useRef } from 'react';
-import { addMasterItem, deleteMasterItem, bulkDeleteMasterItems, deleteAllMasterItems } from '../services/db';
-import { Plus, Trash, Database, Save, Upload, FileSpreadsheet, Download, Info, X } from 'lucide-react';
+import { addMasterItem, deleteMasterItem, bulkDeleteMasterItems, deleteAllMasterItems, triggerReload, triggerToast } from '../services/db';
+import { Plus, Trash, Database, Save, Upload, FileSpreadsheet, Download, Info, X, AlertTriangle, Eye, ChevronDown, Keyboard, Check } from 'lucide-react';
+import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 
 export default function MasterData({ masterData, onMasterUpdated }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isAddMenuOpen, setIsAddMenuOpen] = useState(false);
+  const [importProgress, setImportProgress] = useState({ isImporting: false, current: 0, total: 0 });
   const [detailModalItem, setDetailModalItem] = useState(null);
+  const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', desc: '', actionLabel: '', onConfirm: null, type: 'danger' });
   
   const [nama, setNama] = useState('');
   const [attributes, setAttributes] = useState([]);
@@ -46,19 +49,33 @@ export default function MasterData({ masterData, onMasterUpdated }) {
       attributes: attrObj
     });
 
+    triggerToast('Berhasil!', 'Data pengguna berhasil ditambahkan!');
     if (onMasterUpdated) onMasterUpdated();
-
     setIsModalOpen(false);
-    setNama('');
-    setAttributes([]);
   };
 
   const handleDelete = async (id) => {
-    if (window.confirm('Hapus data user ini?')) {
-      await deleteMasterItem(id);
-      setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
-      if (onMasterUpdated) onMasterUpdated();
-    }
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: 'Hapus data user ini?',
+      desc: 'Data pengguna ini akan dihapus secara permanen.',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Data', subtitle: 'Membuang dari database...' } }));
+        try {
+          await new Promise(r => setTimeout(r, 1000));
+          await deleteMasterItem(id);
+          setSelectedIds(prev => prev.filter(i => i !== id));
+          if (onMasterUpdated) onMasterUpdated();
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => triggerToast('Berhasil!', 'Data pengguna berhasil dihapus!'), 300);
+        } catch (e) {
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => toast.error('Gagal menghapus data'), 300);
+        }
+      }
+    });
   };
 
   const handleSelectAll = (e) => {
@@ -80,43 +97,55 @@ export default function MasterData({ masterData, onMasterUpdated }) {
 
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
-    if (window.confirm(`Hapus ${selectedIds.length} data terpilih secara permanen?`)) {
-      await bulkDeleteMasterItems(selectedIds);
-      setSelectedIds([]);
-      if (onMasterUpdated) onMasterUpdated();
-    }
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: `Hapus ${selectedIds.length} data terpilih?`,
+      desc: 'Data pengguna yang dipilih akan dihapus secara permanen.',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Data', subtitle: 'Membuang dari database...' } }));
+        try {
+          await new Promise(r => setTimeout(r, 1200));
+          await bulkDeleteMasterItems(selectedIds);
+          setSelectedIds([]);
+          if (onMasterUpdated) onMasterUpdated();
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => triggerToast('Berhasil!', `${selectedIds.length} data pengguna berhasil dihapus!`), 300);
+        } catch (e) {
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => toast.error('Gagal menghapus data'), 300);
+        }
+      }
+    });
   };
 
   const handleDeleteAll = async () => {
     if (!masterData || masterData.length === 0) return;
-    if (window.confirm('PERINGATAN: Anda yakin ingin menghapus SELURUH data user secara permanen? Tindakan ini tidak dapat dibatalkan!')) {
-      await deleteAllMasterItems();
-      setSelectedIds([]);
-      if (onMasterUpdated) onMasterUpdated();
-    }
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: 'Hapus SELURUH data user?',
+      desc: 'PERINGATAN: Tindakan ini akan menghapus semua data user secara permanen dan tidak dapat dibatalkan!',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Mengosongkan Data', subtitle: 'Membuang seluruh data dari database...' } }));
+        try {
+          await new Promise(r => setTimeout(r, 1500));
+          await deleteAllMasterItems();
+          setSelectedIds([]);
+          if (onMasterUpdated) onMasterUpdated();
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => triggerToast('Berhasil!', 'Seluruh data pengguna berhasil dikosongkan!'), 300);
+        } catch (e) {
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => toast.error('Gagal mengosongkan data'), 300);
+        }
+      }
+    });
   };
 
   const fileInputRef = useRef(null);
-
-  const downloadSampleExcel = () => {
-    const wsData = [
-      ["Nama Lengkap", "NIK", "Jabatan", "No Telepon", "Alamat"],
-      ["Budi Santoso", "3201111122223333", "Manajer", "081234567890", "Jl. Merdeka No.1"],
-      ["Siti Aminah", "3201111122223334", "Staf Administrasi", "081987654321", "Jl. Sudirman No.5"]
-    ];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    
-    // Auto size columns
-    const wscols = [
-      {wch: 20}, {wch: 20}, {wch: 20}, {wch: 15}, {wch: 30}
-    ];
-    ws['!cols'] = wscols;
-
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Format Import");
-    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    saveAs(new Blob([wbout], { type: "application/octet-stream" }), "Format_Import_Data.xlsx");
-  };
 
   const handleImportExcel = (e) => {
     const file = e.target.files[0];
@@ -134,11 +163,12 @@ export default function MasterData({ masterData, onMasterUpdated }) {
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
         
         if (jsonData.length === 0) {
-          alert('File Excel kosong atau format tidak sesuai.');
+          toast.error('File Excel kosong atau format tidak sesuai.');
           return;
         }
 
-        // Parse and insert each row sequentially to not overwhelm DB, or better do bulk insert (but this is fine for small files)
+        setImportProgress({ isImporting: true, current: 0, total: jsonData.length });
+
         let importedCount = 0;
         for (const row of jsonData) {
           const keys = Object.keys(row);
@@ -161,14 +191,21 @@ export default function MasterData({ masterData, onMasterUpdated }) {
             attributes: rowAttrs
           });
           importedCount++;
+          setImportProgress({ isImporting: true, current: importedCount, total: jsonData.length });
+          
+          // Small delay to allow UI to render progress smoothly for very fast DBs
+          await new Promise(resolve => setTimeout(resolve, 5));
         }
 
-        alert(`Berhasil mengimpor ${importedCount} data dari Excel!`);
-        if (onMasterUpdated) onMasterUpdated();
-        setIsImportModalOpen(false);
+        setTimeout(() => {
+          triggerToast('Import Sukses!', `Berhasil mengimpor ${importedCount} data dari Excel!`);
+          setImportProgress({ isImporting: false, current: 0, total: 0 });
+          if (onMasterUpdated) onMasterUpdated();
+        }, 500);
       } catch (error) {
         console.error("Error importing Excel:", error);
-        alert('Terjadi kesalahan saat membaca file Excel. Pastikan formatnya benar.');
+        toast.error('Terjadi kesalahan saat membaca file Excel. Pastikan formatnya benar.');
+        setImportProgress({ isImporting: false, current: 0, total: 0 });
       } finally {
         e.target.value = null; // reset input
       }
@@ -200,22 +237,35 @@ export default function MasterData({ masterData, onMasterUpdated }) {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0">
-            <button
-              onClick={() => setIsImportModalOpen(true)}
-              className="px-4 py-3 bg-white border border-emerald-200 text-emerald-600 hover:bg-emerald-50 rounded-xl font-bold flex items-center gap-2 transition-all active:scale-95 shadow-sm"
-              title="Import data dari Excel (.xlsx)"
-            >
-              <FileSpreadsheet size={18} />
-              <span className="hidden sm:inline">Import Excel</span>
-            </button>
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-indigo-500/25 transition-all hover:-translate-y-1 active:scale-[0.98]"
-            >
-              <Plus size={18} />
-              User Baru
-            </button>
+          <div className="flex items-center gap-3 shrink-0 relative">
+            <input 
+              type="file" 
+              accept=".xlsx, .xls, .csv" 
+              onChange={handleImportExcel} 
+              ref={fileInputRef} 
+              className="hidden" 
+            />
+            
+            <div className="relative group">
+              <button className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-indigo-500/25 transition-all hover:-translate-y-1 active:scale-[0.98]">
+                <Plus size={18} />
+                Tambah Data
+              </button>
+              <div className="absolute right-0 top-full mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden pt-1">
+                <button 
+                  onClick={() => setIsModalOpen(true)}
+                  className="w-full text-left px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-indigo-600 flex items-center gap-3 transition-colors border-b border-slate-100"
+                >
+                  <Keyboard size={16} /> Input Manual
+                </button>
+                <button 
+                  onClick={() => fileInputRef.current.click()}
+                  className="w-full text-left px-5 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-emerald-600 flex items-center gap-3 transition-colors"
+                >
+                  <FileSpreadsheet size={16} /> Import Excel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -256,7 +306,7 @@ export default function MasterData({ masterData, onMasterUpdated }) {
               {masterData && masterData.map((item, index) => {
                 const isSelected = selectedIds.includes(item.id);
                 // Create a brief summary string of attributes
-                const attrs = Object.keys(item.attributes || {}).map(k => `${k.replace(/_/g, ' ')}: ${item.attributes[k]}`).join('  |  ');
+                const attrCount = Object.keys(item.attributes || {}).length;
                 
                 return (
                 <tr 
@@ -279,18 +329,26 @@ export default function MasterData({ masterData, onMasterUpdated }) {
                     </div>
                   </td>
                   <td className="px-4 py-3 border-r border-slate-50 w-full max-w-0">
-                    <div className="text-[11px] font-semibold text-slate-500 truncate" title={attrs}>
-                      {attrs || <span className="italic text-slate-300">Tidak ada atribut khusus</span>}
+                    <div className="text-[11px] font-semibold text-slate-500 truncate">
+                      {attrCount > 0 ? (
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">
+                          {attrCount} atribut tersimpan
+                        </span>
+                      ) : (
+                        <span className="italic text-slate-300">Tidak ada atribut khusus</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <button 
-                      onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
-                      className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 p-2 rounded-lg transition-colors inline-flex border border-transparent hover:border-rose-100 shadow-sm opacity-50 group-hover:opacity-100"
-                      title="Hapus Baris Ini"
-                    >
-                      <Trash size={14} />
-                    </button>
+                    <div className="flex justify-center items-center gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); setDetailModalItem(item); }}
+                        className="text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 p-2 rounded-lg transition-colors inline-flex border border-transparent hover:border-indigo-100 shadow-sm"
+                        title="Lihat Detail Profil"
+                      >
+                        <Eye size={14} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               )})}
@@ -333,26 +391,21 @@ export default function MasterData({ masterData, onMasterUpdated }) {
             
             {/* Attributes Area */}
             <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
-              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-400 mb-4 border-b border-slate-100 pb-2">Informasi Atribut</h4>
               
-              <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {Object.keys(detailModalItem.attributes || {}).map(key => (
-                  <div key={key} className="flex flex-col sm:flex-row sm:items-start gap-1 sm:gap-4 border-b border-slate-50 pb-3 last:border-0 last:pb-0">
-                    <div className="w-full sm:w-1/3">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{key.replace(/_/g, ' ')}</p>
-                    </div>
-                    <div className="w-full sm:w-2/3">
-                      <p className="text-[13px] font-semibold text-slate-800 whitespace-pre-wrap leading-relaxed">{detailModalItem.attributes[key]}</p>
-                    </div>
+                  <div key={key} className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col">
+                    <span className="text-[10px] font-black uppercase tracking-widest text-indigo-500 mb-1">{key.replace(/_/g, ' ')}</span>
+                    <span className="text-sm font-bold text-slate-800 break-words">{detailModalItem.attributes[key]}</span>
                   </div>
                 ))}
-                
-                {(!detailModalItem.attributes || Object.keys(detailModalItem.attributes).length === 0) && (
-                  <div className="p-6 rounded-xl border border-dashed border-slate-200 text-center bg-slate-50">
-                    <p className="text-xs text-slate-500 font-medium italic">Data ini hanya memiliki Nama tanpa atribut tambahan.</p>
-                  </div>
-                )}
               </div>
+              
+              {(!detailModalItem.attributes || Object.keys(detailModalItem.attributes).length === 0) && (
+                <div className="p-4 rounded-xl border border-dashed border-slate-200 text-center bg-slate-50">
+                  <p className="text-xs text-slate-500 font-medium italic">Data ini hanya memiliki Nama tanpa atribut tambahan.</p>
+                </div>
+              )}
             </div>
             
             {/* Footer */}
@@ -476,68 +529,80 @@ export default function MasterData({ masterData, onMasterUpdated }) {
         </div>
       )}
 
-      {/* Modal Import Excel */}
-      {isImportModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setIsImportModalOpen(false)}></div>
-          <div className="bg-white/95 backdrop-blur-2xl w-full max-w-lg rounded-[2rem] p-6 shadow-2xl relative z-10 border border-white/50 flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
-            <div className="flex items-center justify-between mb-5 shrink-0">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30">
-                  <FileSpreadsheet size={20} />
+      {/* Sleek Progress Overlay */}
+      {importProgress.isImporting && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"></div>
+          
+          <div className="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl relative z-10 flex flex-col items-center animate-in zoom-in-95 duration-300">
+             
+             {/* Progress spinner */}
+             <div className="relative w-20 h-20 mb-6">
+                <div className="absolute inset-0 border-4 border-slate-100 rounded-full"></div>
+                <div 
+                  className="absolute inset-0 border-4 border-indigo-500 rounded-full animate-spin border-t-transparent"
+                  style={{ animationDuration: '1.5s' }}
+                ></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <FileSpreadsheet size={24} className="text-indigo-500 animate-pulse" />
                 </div>
-                <div>
-                  <h3 className="text-xl font-black text-slate-800 tracking-tight">Import dari Excel</h3>
-                  <p className="text-[11px] font-bold text-slate-500">Tambahkan data massal dengan mudah.</p>
-                </div>
-              </div>
-              <button onClick={() => setIsImportModalOpen(false)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-100 w-8 h-8 rounded-full flex items-center justify-center transition-colors">
-                <X size={16} />
-              </button>
-            </div>
-            
-            <div className="flex flex-col flex-1 overflow-hidden">
-              <div className="overflow-y-auto pr-2 pb-4 space-y-4 flex-1 custom-scrollbar">
-                
-                <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-4 relative overflow-hidden">
-                  <Info size={80} className="absolute -right-4 -bottom-4 text-blue-500 opacity-5 pointer-events-none" />
-                  <h4 className="font-black text-blue-900 text-xs mb-2 flex items-center gap-2 relative z-10">
-                    Cara Menggunakan Fitur Import:
-                  </h4>
-                  <ul className="text-[10px] text-blue-800 font-bold space-y-2 list-disc list-inside relative z-10">
-                    <li>Baris pertama di Excel akan dianggap sebagai <strong>Nama Kolom (Variabel)</strong>.</li>
-                    <li>Wajib memiliki kolom bernama <strong>"Nama Lengkap"</strong> atau <strong>"Nama"</strong>.</li>
-                    <li>Kolom sisanya (seperti NIK, Alamat, No HP) akan otomatis ditambahkan sebagai atribut dinamis tanpa batas!</li>
-                  </ul>
-                  
-                  <button 
-                    onClick={downloadSampleExcel}
-                    className="mt-4 px-4 py-2 bg-white border border-blue-200 text-blue-600 rounded-xl text-[10px] font-black hover:bg-blue-50 transition-colors shadow-sm flex items-center gap-2 relative z-10"
-                  >
-                    <Download size={14} /> Unduh Format Template Excel (.xlsx)
-                  </button>
-                </div>
+             </div>
 
-                <div className="bg-emerald-50/50 border border-emerald-100 rounded-2xl p-6 text-center border-dashed">
-                  <Upload size={32} className="text-emerald-500 mx-auto mb-3" />
-                  <h4 className="font-black text-emerald-900 text-sm mb-1">Upload File Anda Disini</h4>
-                  <p className="text-[10px] text-emerald-700/70 font-bold mb-4">Mendukung format .xlsx, .xls, atau .csv</p>
-                  
-                  <input 
-                    type="file" 
-                    accept=".xlsx, .xls, .csv" 
-                    onChange={handleImportExcel} 
-                    ref={fileInputRef} 
-                    className="hidden" 
-                  />
-                  <button 
-                    onClick={() => fileInputRef.current.click()}
-                    className="px-6 py-2.5 bg-emerald-500 text-white rounded-xl text-xs font-black hover:bg-emerald-600 transition-colors shadow-lg shadow-emerald-500/20 inline-flex items-center gap-2"
-                  >
-                    Pilih File Excel
-                  </button>
+             <h3 className="text-lg font-black text-slate-800 mb-1">Menyimpan Data...</h3>
+             <p className="text-sm font-medium text-slate-500 mb-6 text-center">
+               Mohon tunggu, jangan tutup aplikasi.
+             </p>
+
+             {/* Bar */}
+             <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden shadow-inner relative">
+                <div 
+                  className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300 ease-out relative"
+                  style={{ width: `${(importProgress.current / importProgress.total) * 100}%` }}
+                >
+                   <div className="absolute inset-0 bg-white/20 animate-[shimmer_1s_infinite_linear]"></div>
                 </div>
-              </div>
+             </div>
+             <div className="w-full flex justify-between items-center mt-2 px-1">
+                <span className="text-[11px] font-bold text-slate-400">
+                  {importProgress.current} / {importProgress.total} baris
+                </span>
+                <span className="text-[11px] font-black text-indigo-600">
+                  {Math.round((importProgress.current / importProgress.total) * 100)}%
+                </span>
+             </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmConfig.isOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}></div>
+          <div className="relative bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 text-center animate-in fade-in zoom-in-95 duration-300 slide-in-from-bottom-8">
+            <div className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4 ${confirmConfig.type === 'danger' ? 'bg-red-50 text-red-500 shadow-red-500/20' : 'bg-indigo-50 text-indigo-500 shadow-indigo-500/20'} shadow-lg`}>
+              {confirmConfig.type === 'danger' ? <AlertTriangle size={32} /> : <Info size={32} />}
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">{confirmConfig.title}</h3>
+            <p className="text-sm font-medium text-slate-500 mb-8">{confirmConfig.desc}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center gap-2"
+              >
+                <X size={18} />
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  if (confirmConfig.onConfirm) confirmConfig.onConfirm();
+                  setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                }}
+                className={`flex-1 px-4 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 ${confirmConfig.type === 'danger' ? 'bg-red-500 hover:bg-red-600 shadow-red-500/30' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/30'}`}
+              >
+                {confirmConfig.type === 'danger' ? <Trash size={18} /> : <Check size={18} />}
+                {confirmConfig.actionLabel}
+              </button>
             </div>
           </div>
         </div>

@@ -34,6 +34,8 @@ contextBridge.exposeInMainWorld('api', {
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
   isElectron: true,
+  
+  toggleServer: (enabled, port) => ipcRenderer.invoke('server:toggle', { enabled, port }),
 
   // ----------------------------------------------------
   // 4. FUNGSI ARSIP SURAT MASUK & KATEGORI
@@ -67,5 +69,13 @@ contextBridge.exposeInMainWorld('api', {
   // 7. FUNGSI HAPUS DATA
   // ----------------------------------------------------
   hapusEntitas: (id) => ipcRenderer.invoke('db:hapusEntitas', id),
-  hapusSurat: (id) => ipcRenderer.invoke('db:hapusSurat', id)
+  hapusSurat: (id) => ipcRenderer.invoke('db:hapusSurat', id),
+  hapusSuratFisik: (filePath) => ipcRenderer.invoke('fs:hapusSuratFisik', filePath),
+  cetakSuratFisik: (filePath) => ipcRenderer.invoke('fs:cetakSuratFisik', filePath),
+  saveFile: (data) => ipcRenderer.invoke('fs:saveFile', data)
+});
+
+// Mengekspos API untuk utilitas sistem (Cetak dll)
+contextBridge.exposeInMainWorld('electronAPI', {
+  printDocx: (filePath) => ipcRenderer.send('print-docx', filePath)
 });

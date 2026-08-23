@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Folder, Save } from 'lucide-react';
+import { Folder, Save, Info, HardDrive } from 'lucide-react';
+import { toast } from 'sonner';
 
 export default function FolderPickerModal({ settings, onClose, onSaved }) {
   const [folderKeluar, setFolderKeluar] = useState(
@@ -61,7 +62,7 @@ export default function FolderPickerModal({ settings, onClose, onSaved }) {
                       const folder = await window.api.pilihFolder();
                       if (folder) setFolderKeluar(folder);
                     } else {
-                      alert("Fitur ini hanya tersedia di aplikasi mode Desktop (Electron).");
+                      toast.error("Fitur ini hanya tersedia di aplikasi mode Desktop (Electron).");
                     }
                   }}
                   className="px-4 py-2 rounded-md bg-[#354353] text-sm font-bold text-white hover:bg-[#3498db] transition-colors shrink-0 outline-none"
@@ -94,7 +95,7 @@ export default function FolderPickerModal({ settings, onClose, onSaved }) {
                       const folder = await window.api.pilihFolder();
                       if (folder) setFolderMasuk(folder);
                     } else {
-                      alert("Fitur ini hanya tersedia di aplikasi mode Desktop (Electron).");
+                      toast.error("Fitur ini hanya tersedia di aplikasi mode Desktop (Electron).");
                     }
                   }}
                   className="px-4 py-2 rounded-md bg-[#354353] text-sm font-bold text-white hover:bg-[#3498db] transition-colors shrink-0 outline-none"

@@ -80,15 +80,6 @@ export async function extractTextFromDocx(fileBlob) {
   try {
     const arrayBuffer = await fileBlob.arrayBuffer();
     const zip = new PizZip(arrayBuffer);
-    
-    // SANITIZE XML: Remove spellcheck (proofErr) tags which commonly break {{ }} parsing in Word
-    for (let key in zip.files) {
-      if (zip.files[key].name.endsWith('.xml')) {
-        let content = zip.files[key].asText();
-        content = content.replace(/<w:proofErr[^>]*>/g, '');
-        zip.file(zip.files[key].name, content);
-      }
-    }
 
     const result = await mammoth.extractRawText({ arrayBuffer });
     return result.value; // Teks murni dari .docx
@@ -110,22 +101,19 @@ export async function generateNativeDocx(fileBase64, formData, outputFileName) {
     }
     
     const zip = new PizZip(bytes.buffer);
-    
-    // SANITIZE XML: Remove spellcheck (proofErr) tags which commonly break {{ }} parsing in Word
-    for (let key in zip.files) {
-      if (zip.files[key].name.endsWith('.xml')) {
-        let content = zip.files[key].asText();
-        content = content.replace(/<w:proofErr[^>]*>/g, '');
-        zip.file(zip.files[key].name, content);
-      }
-    }
 
     const imageOptions = {
       centered: false,
       getImage(tagValue, tagName) {
         if(tagValue && tagValue.startsWith("data:image")) {
           const base64Data = tagValue.replace(/^data:image\/\w+;base64,/, "");
-          return Buffer.from(base64Data, "base64");
+          const binaryString = atob(base64Data);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          return bytes.buffer;
         }
         return tagValue;
       },
@@ -139,7 +127,11 @@ export async function generateNativeDocx(fileBase64, formData, outputFileName) {
       doc = new Docxtemplater(zip, {
         paragraphLoop: true,
         linebreaks: true,
+        delimiters: { start: '{{', end: '}}' },
         modules: [new ImageModule(imageOptions)],
+        nullGetter: function(part) {
+          return "";
+        }
       });
     } catch(err) {
       console.error("Docxtemplater error in templateEngine:", err);

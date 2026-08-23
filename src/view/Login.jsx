@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import ModalLupaSandi from './components/ModalLupaSandi'; // Komponen Modal terpisah
+import { toast } from 'sonner';
 import Titlebar from '../components/Titlebar';
 import { verifikasiUserLocal, resetPasswordAdmin, getSettings } from '../services/db';
+import LogoNebula from '../assets/logonebula.png';
 
-export default function Login({ onLoginSuccess }) {
+export default function Login({ onLoginSuccess, settings }) {
   let navigate;
   try {
     navigate = useNavigate();
@@ -46,7 +47,7 @@ export default function Login({ onLoginSuccess }) {
       if (response && response.success) {
         setIsLoading(false);
         if (onLoginSuccess) {
-          onLoginSuccess(response.role);
+          onLoginSuccess(response.role, response.nama_lengkap);
         } else if (navigate) {
           navigate('/dashboard');
         }
@@ -76,7 +77,7 @@ export default function Login({ onLoginSuccess }) {
       setIsModalOpen(false);
       setMasterPin('');
       setPinError('');
-      alert("Kata sandi berhasil direset menjadi: 123");
+      toast.success("Kata sandi berhasil direset menjadi: 123");
     } else {
       setPinError('PIN Keamanan Master tidak valid.');
     }
@@ -117,7 +118,7 @@ export default function Login({ onLoginSuccess }) {
 
           {/* Gambar Latar Belakang */}
           <img
-            src="https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=2069&auto=format&fit=crop"
+            src={settings?.login_bg_base64 || "https://images.unsplash.com/photo-1497366216548-37526070297c?q=80&w=2069&auto=format&fit=crop"}
             alt="Corporate Office"
             className="absolute inset-0 w-full h-full object-cover opacity-80 scale-105"
           />
@@ -128,20 +129,31 @@ export default function Login({ onLoginSuccess }) {
           {/* Pola Tekstur Titik */}
           <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '32px 32px' }}></div>
 
-          {/* Label Versi */}
-          <div className="absolute top-8 left-12 z-20">
-            <span className="px-4 py-1.5 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-[10px] font-bold text-white shadow-sm uppercase tracking-widest">
+          {/* Label Versi dan Logo Nebula (Top Left) */}
+          <div className="absolute top-8 left-12 z-20 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <img 
+                src={LogoNebula} 
+                alt="Nebula Logo" 
+                className="h-8 object-contain drop-shadow-md" 
+              />
+              <span className="text-white font-black text-lg tracking-wide drop-shadow-sm">Nebula Envelope</span>
+            </div>
+            <div className="w-px h-6 bg-white/20"></div>
+            <span className="px-3 py-1 bg-white/10 backdrop-blur-md border border-white/20 rounded-full text-[9px] font-bold text-white shadow-sm uppercase tracking-widest">
               v1.0.0 — Edisi Offline
             </span>
           </div>
 
           <div className={`relative z-10 slide-reveal delay-100 ${isLoaded ? 'active' : ''}`}>
             {/* Logo Instansi Kiri */}
-            <div className="w-14 h-14 bg-indigo-600 rounded-[1rem] flex items-center justify-center shadow-xl mb-6 border border-indigo-400/20">
-              <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H15" />
-              </svg>
-            </div>
+            {settings?.logo_base64 && (
+              <img 
+                src={settings.logo_base64} 
+                alt="Logo Instansi" 
+                className="h-16 mb-6 drop-shadow-xl object-contain" 
+              />
+            )}
 
             <h1 className="text-4xl xl:text-5xl font-extrabold text-white leading-tight mb-5 drop-shadow-xl">
               Manajemen Administrasi<br />Terpadu Nabastala.
@@ -164,11 +176,23 @@ export default function Login({ onLoginSuccess }) {
 
             {/* Header Form */}
             <div className={`mb-10 text-left slide-reveal delay-100 ${isLoaded ? 'active' : ''}`}>
-              <div className="lg:hidden w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center mb-5 shadow-lg">
-                <svg className="w-7 h-7 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9.5a2.5 2.5 0 00-2.5-2.5H15" />
-                </svg>
+              <div className="lg:hidden mb-5 flex items-center gap-2">
+                <img 
+                  src={LogoNebula} 
+                  alt="Nebula Logo" 
+                  className="h-8 object-contain drop-shadow-md" 
+                />
+                <span className="text-slate-800 font-black text-lg tracking-wide drop-shadow-sm">Nebula Envelope</span>
               </div>
+              {settings?.logo_base64 && (
+                <div className="lg:hidden mb-5">
+                  <img 
+                    src={settings.logo_base64} 
+                    alt="Logo Instansi" 
+                    className="h-12 object-contain" 
+                  />
+                </div>
+              )}
               <h2 className="text-3xl lg:text-4xl font-extrabold text-slate-900 mb-2 tracking-tight">Otorisasi</h2>
               <p className="text-[15px] text-slate-500 font-medium">Otorisasi institusi mandiri.</p>
             </div>
@@ -286,15 +310,36 @@ export default function Login({ onLoginSuccess }) {
           </div>
         </div>
 
-        {/* Modal Komponen Lupa Sandi */}
-        <ModalLupaSandi
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          masterPin={masterPin}
-          setMasterPin={setMasterPin}
-          pinError={pinError}
-          onSubmit={handleResetPassword}
-        />
+        {/* Modal Lupa Sandi Info - Inline */}
+        {isModalOpen && (
+          <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md" onClick={() => setIsModalOpen(false)}></div>
+            <div className="relative bg-white/95 backdrop-blur-2xl border border-white/60 w-full max-w-md rounded-[2rem] p-8 shadow-[0_20px_60px_-15px_rgba(0,0,0,0.5)] transform animate-in zoom-in-95 duration-300 text-center">
+              <button 
+                onClick={() => setIsModalOpen(false)} 
+                className="absolute top-5 right-5 text-slate-400 hover:text-slate-800 bg-slate-100/50 hover:bg-slate-200 p-2 rounded-full transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+
+              <div className="w-16 h-16 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center mx-auto mb-6 border border-rose-100 shadow-[0_10px_20px_-10px_rgba(225,29,72,0.4)]">
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h3 className="text-2xl font-black text-slate-900 mb-2">Lupa Kata Sandi?</h3>
+              <p className="text-sm text-slate-500 font-medium leading-relaxed px-4 mb-8">
+                Sistem berjalan secara luring (offline) tanpa integrasi email. 
+                <br/><br/>
+                Untuk mereset kata sandi Anda, silakan hubungi <strong className="text-slate-800">Administrator Sistem</strong> secara langsung. Jika Anda adalah Administrator dan kehilangan akses, hubungi tim pengembang.
+              </p>
+
+              <button onClick={() => setIsModalOpen(false)} className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white text-sm font-bold rounded-2xl transition-all duration-300 shadow-lg active:scale-[0.98]">
+                Saya Mengerti
+              </button>
+            </div>
+          </div>
+        )}
 
         </div>
       </div>

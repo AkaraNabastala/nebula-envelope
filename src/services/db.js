@@ -7,21 +7,40 @@
 
 const isDev = import.meta.env?.MODE === 'development' || window.location.port === '5173';
 const isElectronFile = window.location.protocol === 'file:';
+import { toast } from 'sonner';
 
 export let API_BASE_URL = '';
 if (isDev || isElectronFile) {
   // Jika diakses secara lokal dari Komputer A (lewat Electron atau Vite dev server)
-  // TODO: Port harusnya dinamis jika admin mengubahnya, tapi untuk aman kita fallback ke 8080
-  API_BASE_URL = 'http://localhost:8080/api';
+  // Ambil port dinamis dari parameter URL yang disematkan oleh main.cjs
+  const urlParams = new URLSearchParams(window.location.search);
+  const activePort = urlParams.get('port') || '8080';
+  API_BASE_URL = `http://localhost:${activePort}/api`;
 } else {
   // Jika diakses dari Komputer B (via Browser LAN), gunakan asal IP secara otomatis
   API_BASE_URL = `${window.location.origin}/api`;
 }
 
+export const setApiPort = (port) => {
+  if (isDev || isElectronFile) {
+    API_BASE_URL = `http://localhost:${port}/api`;
+  }
+};
+
+
 // Fungsi helper untuk Request
 async function fetchAPI(endpoint, options = {}) {
   try {
-    const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+    const isGet = !options.method || options.method === 'GET';
+    const cacheOption = isGet ? { cache: 'no-store' } : {};
+    
+    // Pastikan tidak ada caching di semua level
+    const finalEndpoint = isGet 
+      ? (endpoint.includes('?') ? `${endpoint}&_t=${Date.now()}` : `${endpoint}?_t=${Date.now()}`)
+      : endpoint;
+
+    const res = await fetch(`${API_BASE_URL}${finalEndpoint}`, {
+      ...cacheOption,
       ...options,
       headers: {
         'Content-Type': 'application/json',
@@ -54,9 +73,11 @@ export async function getSettings() {
 }
 
 export async function saveSettings(newSettings) {
+  const currentSettings = await getSettings() || {};
+  const mergedSettings = { ...currentSettings, ...newSettings };
   await fetchAPI('/settings', {
     method: 'POST',
-    body: JSON.stringify(newSettings)
+    body: JSON.stringify(mergedSettings)
   });
   return await getSettings();
 }
@@ -108,6 +129,16 @@ export async function saveTemplate(template) {
 
 export async function deleteTemplate(id) {
   await fetchAPI(`/templates/${id}`, { method: 'DELETE' });
+}
+
+export async function bulkDeleteTemplates(ids) {
+  for (const id of ids) {
+    await deleteTemplate(id);
+  }
+}
+
+export async function injectOpsi2Template() {
+  await fetchAPI('/inject-opsi2', { method: 'POST' });
 }
 
 // ==========================================
@@ -177,9 +208,9 @@ export async function verifikasiUserLocal(username, password) {
       method: 'POST',
       body: JSON.stringify({ username, password })
     });
-    return { success: res.success === true, role: res.role || 'operator' };
+    return { success: res.success === true, role: res.role || 'operator', nama_lengkap: res.nama_lengkap || 'Pengguna' };
   } catch (e) {
-    return { success: false, role: 'operator' };
+    return { success: false, role: 'operator', nama_lengkap: 'Pengguna' };
   }
 }
 
@@ -214,3 +245,41 @@ export async function resetPasswordAdmin(newPassword) {
   console.log("Password reset functionality to be implemented in backend");
   return true;
 }
+
+export const triggerToast = (title, message, type = 'success') => {
+  if (type === 'success') {
+    window.dispatchEvent(new CustomEvent('show-toast', { detail: { type, title, message } }));
+  } else if (type === 'error') {
+    toast.error(title, { description: message });
+  } else {
+    toast.info(title, { description: message });
+  }
+};
+
+export const triggerReload = (delay = 2500) => {
+  if (document.getElementById('reload-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'reload-overlay';
+  overlay.className = 'fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[9999] flex items-center justify-center transition-all duration-300 opacity-0';
+  overlay.innerHTML = `
+    <div class="bg-white p-6 rounded-2xl shadow-2xl flex flex-col items-center gap-4 animate-in zoom-in duration-300">
+      <div class="w-10 h-10 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+      <p class="text-sm font-bold text-slate-700 animate-pulse">Memuat ulang data...</p>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => {
+    overlay.classList.remove('opacity-0');
+    overlay.classList.add('opacity-100');
+  });
+  setTimeout(async () => {
+    if (typeof window.refreshAppData === 'function') {
+      await window.refreshAppData();
+      overlay.classList.remove('opacity-100');
+      overlay.classList.add('opacity-0');
+      setTimeout(() => overlay.remove(), 300);
+    } else {
+      window.location.reload();
+    }
+  }, delay);
+};

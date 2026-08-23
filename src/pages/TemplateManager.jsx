@@ -1,13 +1,13 @@
 import React, { useState, useRef } from 'react';
 import { parseTemplateVariables, extractTextFromDocx } from '../utils/templateEngine';
-import { saveTemplate, deleteTemplate } from '../services/db';
-import { Plus, Trash, FileText, Upload, Save, X, FileBadge, Edit3, Eye } from 'lucide-react';
+import { saveTemplate, deleteTemplate, bulkDeleteTemplates, triggerReload, triggerToast } from '../services/db';
+import { toast } from 'sonner';
+import { Plus, Trash, FileText, Upload, Save, X, FileBadge, Edit3, Eye, AlertTriangle, Info, Check } from 'lucide-react';
 
 export default function TemplateManager({ templates, onTemplatesUpdated }) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
-  const [previewItem, setPreviewItem] = useState(null);
-  
+  const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', desc: '', actionLabel: '', onConfirm: null, type: 'danger' });
   const [editingId, setEditingId] = useState(null);
   const [namaTemplate, setNamaTemplate] = useState('');
   const [konten, setKonten] = useState('');
@@ -21,6 +21,50 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
   const [ukuranKertas, setUkuranKertas] = useState('A4');
   const [kopSuratBase64, setKopSuratBase64] = useState('');
   const [kopSuratName, setKopSuratName] = useState('');
+  const [selectedTemplateIds, setSelectedTemplateIds] = useState([]);
+
+  const handleSelectAll = (e) => {
+    if (e.target.checked && templates) {
+      setSelectedTemplateIds(templates.map(t => t.id));
+    } else {
+      setSelectedTemplateIds([]);
+    }
+  };
+
+  const handleSelectOne = (e, id) => {
+    if (e.target.checked) {
+      setSelectedTemplateIds(prev => [...prev, id]);
+    } else {
+      setSelectedTemplateIds(prev => prev.filter(i => i !== id));
+    }
+  };
+
+  const handleDeleteSelected = () => {
+    if (selectedTemplateIds.length === 0) return;
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: `Hapus ${selectedTemplateIds.length} template terpilih?`,
+      desc: 'Template yang dipilih akan dihapus secara permanen.',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Template', subtitle: 'Membuang data ke tempat sampah...' } }));
+        setTimeout(async () => {
+          try {
+            await bulkDeleteTemplates(selectedTemplateIds);
+            setSelectedTemplateIds([]);
+            if (onTemplatesUpdated) onTemplatesUpdated();
+            window.dispatchEvent(new CustomEvent('hide-processing'));
+            setTimeout(() => triggerToast('Berhasil!', `${selectedTemplateIds.length} template berhasil dihapus.`), 300);
+          } catch (e) {
+            window.dispatchEvent(new CustomEvent('hide-processing'));
+            setTimeout(() => toast.error('Gagal menghapus template'), 300);
+          }
+        }, 1500);
+      }
+    });
+  };
+
 
   const fileInputRef = useRef(null);
   const kopInputRef = useRef(null);
@@ -70,11 +114,12 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
             setNamaTemplate(result.name.replace('.docx', ''));
           }
           setIsModalOpen(true);
+          toast.success("File DOCX berhasil diimpor!");
         } else if (result && result.error) {
-          alert(result.error);
+          toast.error(result.error);
         }
       } catch (err) {
-        alert("Gagal membaca file .docx!");
+        toast.error("Gagal membaca file .docx!");
         console.error(err);
       }
       return;
@@ -96,7 +141,7 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
         setIsDocxTemplate(true);
         
         const text = await extractTextFromDocx(file);
-        const matches = text.match(/\{\{([^}]+)\}\}/g);
+        const matches = text.match(/\{+([^}]+)\}+/g);
         if (matches) {
           const vars = [...new Set(matches.map(m => m.replace(/[{}]/g, '').trim()))];
           setDocxVars(vars);
@@ -109,9 +154,10 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
         if (!editingId) {
           setNamaTemplate(file.name.replace('.docx', ''));
         }
-        setIsModalOpen(true);
+        if (onTemplatesUpdated) onTemplatesUpdated();
+        triggerToast('Berhasil!', 'File DOCX berhasil diimpor! Silahkan klik Simpan.');
       } catch (err) {
-        alert("Gagal membaca file .docx!");
+        toast.error("Gagal membaca file .docx!");
         console.error(err);
       } finally {
         e.target.value = null;
@@ -125,7 +171,7 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
     if (!file) return;
 
     if (!file.type.startsWith('image/')) {
-      alert('Harap pilih file gambar (JPG/PNG).');
+      toast.error('Harap pilih file gambar (JPG/PNG).');
       return;
     }
 
@@ -152,11 +198,27 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
       kop_surat_base64: kopSuratBase64
     };
 
-    await saveTemplate(templateData);
-    if (onTemplatesUpdated) onTemplatesUpdated();
-
-    setIsModalOpen(false);
-    resetForm();
+    try {
+      setIsModalOpen(false); // Tutup modal duluan biar kelihatan progressnya
+      window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'upload', title: 'Mengunggah Template', subtitle: 'Proses uploading ke cloud...' } }));
+      
+      setTimeout(async () => {
+        try {
+          await saveTemplate(templateData);
+          if (onTemplatesUpdated) onTemplatesUpdated();
+          resetForm();
+          const msg = editingId ? 'Template berhasil diperbarui!' : 'Template berhasil diunggah!';
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => triggerToast('Berhasil!', msg), 300);
+        } catch (error) {
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          setTimeout(() => toast.error("Gagal mengunggah template."), 300);
+        }
+      }, 1500);
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('hide-processing'));
+      setTimeout(() => toast.error("Terjadi kesalahan sistem."), 300);
+    }
   };
 
   const handleEdit = (t) => {
@@ -176,16 +238,23 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (id) => {
-    if (window.confirm('Hapus template ini secara permanen?')) {
-      await deleteTemplate(id);
-      if (onTemplatesUpdated) onTemplatesUpdated();
-    }
-  };
-
-  const handlePreview = (t) => {
-    setPreviewItem(t);
-    setIsPreviewOpen(true);
+  const handleDelete = (id) => {
+    setConfirmConfig({
+      isOpen: true,
+      type: 'danger',
+      title: 'Hapus template?',
+      desc: 'Apakah Anda yakin ingin menghapus template ini secara permanen?',
+      actionLabel: 'Hapus',
+      onConfirm: async () => {
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Template', subtitle: 'Membuang data ke tempat sampah...' } }));
+        setTimeout(async () => {
+          await deleteTemplate(id);
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          if (onTemplatesUpdated) onTemplatesUpdated();
+          triggerToast('Berhasil!', 'Template berhasil dihapus.');
+        }, 1500);
+      }
+    });
   };
 
   return (
@@ -212,6 +281,16 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
           </div>
 
           <div className="flex items-center gap-3 shrink-0">
+            {selectedTemplateIds.length > 0 && (
+              <button
+                onClick={handleDeleteSelected}
+                className="px-4 py-3 bg-rose-50 border border-rose-200 text-rose-600 hover:bg-rose-500 hover:text-white rounded-xl font-bold flex items-center gap-2 transition-all active:scale-95 shadow-sm"
+              >
+                <Trash size={18} />
+                <span className="hidden sm:inline">Hapus Terpilih ({selectedTemplateIds.length})</span>
+              </button>
+            )}
+
             <input 
               type="file" 
               accept=".docx" 
@@ -219,31 +298,37 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
               ref={fileInputRef} 
               className="hidden" 
             />
-            <button
-              onClick={(e) => {
-                resetForm();
-                if (window.api && window.api.pilihFileDocx) {
-                  handleImportDocx(e);
-                } else {
-                  fileInputRef.current.click();
-                }
-              }}
-              className="px-4 py-3 bg-white border border-blue-200 text-blue-600 hover:bg-blue-50 rounded-xl font-bold flex items-center gap-2 transition-all active:scale-95 shadow-sm"
-              title="Import file Microsoft Word (.docx)"
-            >
-              <FileBadge size={18} />
-              <span className="hidden sm:inline">Import DOCX</span>
-            </button>
-            <button
-              onClick={() => {
-                resetForm();
-                setIsModalOpen(true);
-              }}
-              className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-indigo-500/25 transition-all hover:-translate-y-1 active:scale-[0.98]"
-            >
-              <Plus size={18} />
-              Teks Manual
-            </button>
+            
+            <div className="relative group">
+              <button className="px-5 py-3 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-400 hover:to-purple-400 text-white rounded-xl font-black text-xs uppercase tracking-widest flex items-center gap-2 shadow-xl shadow-indigo-500/25 transition-all hover:-translate-y-1 active:scale-[0.98]">
+                <Plus size={18} />
+                Tambah Template
+              </button>
+              <div className="absolute right-0 top-full mt-2 w-48 bg-white border border-slate-200 rounded-xl shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50 overflow-hidden pt-1">
+                <button
+                  onClick={() => {
+                    resetForm();
+                    setIsModalOpen(true);
+                  }}
+                  className="w-full text-left px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-indigo-600 flex items-center gap-3 border-b border-slate-100"
+                >
+                  <FileText size={16} /> Input Manual
+                </button>
+                <button
+                  onClick={(e) => {
+                    resetForm();
+                    if (window.api && window.api.pilihFileDocx) {
+                      handleImportDocx(e);
+                    } else {
+                      fileInputRef.current.click();
+                    }
+                  }}
+                  className="w-full text-left px-4 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 hover:text-blue-600 flex items-center gap-3"
+                >
+                  <FileBadge size={16} /> Import DOCX
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -252,6 +337,9 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
           <table className="w-full text-left text-xs whitespace-nowrap">
             <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-sm z-10 shadow-sm">
               <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-slate-200/60">
+                <th className="px-4 py-3.5 w-10 text-center border-r border-slate-100/50">
+                  <input type="checkbox" onChange={handleSelectAll} checked={templates && templates.length > 0 && selectedTemplateIds.length === templates.length} className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" />
+                </th>
                 <th className="px-4 py-3.5 w-16 text-center border-r border-slate-100/50">No</th>
                 <th className="px-4 py-3.5 border-r border-slate-100/50">Nama & Jenis Template</th>
                 <th className="px-4 py-3.5 border-r border-slate-100/50">Jumlah Variabel</th>
@@ -266,8 +354,11 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
                 return (
                 <tr 
                   key={t.id} 
-                  className={`group hover:bg-slate-50/70 transition-colors bg-white`}
+                  className={`group transition-colors bg-white ${selectedTemplateIds.includes(t.id) ? 'bg-indigo-50/50' : 'hover:bg-slate-50/70'}`}
                 >
+                  <td className="px-4 py-4 text-center border-r border-slate-50">
+                    <input type="checkbox" checked={selectedTemplateIds.includes(t.id)} onChange={(e) => handleSelectOne(e, t.id)} className="w-3.5 h-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer" />
+                  </td>
                   <td className="px-4 py-4 font-bold text-slate-400 text-center border-r border-slate-50">{index + 1}</td>
                   
                   <td className="px-4 py-4 border-r border-slate-50">
@@ -294,25 +385,11 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
                   <td className="px-4 py-4 text-center">
                     <div className="flex justify-center items-center gap-1 opacity-60 group-hover:opacity-100 transition-opacity">
                       <button 
-                        onClick={() => handlePreview(t)}
-                        className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-lg transition-all border border-transparent hover:border-indigo-100 shadow-sm"
-                        title="Preview Konten"
-                      >
-                        <Eye size={15} />
-                      </button>
-                      <button 
                         onClick={() => handleEdit(t)}
                         className="text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 p-2 rounded-lg transition-all border border-transparent hover:border-emerald-100 shadow-sm"
                         title="Edit Template"
                       >
                         <Edit3 size={15} />
-                      </button>
-                      <button 
-                        onClick={() => handleDelete(t.id)}
-                        className="text-slate-400 hover:text-rose-600 hover:bg-rose-50 p-2 rounded-lg transition-all border border-transparent hover:border-rose-100 shadow-sm"
-                        title="Hapus Template"
-                      >
-                        <Trash size={15} />
                       </button>
                     </div>
                   </td>
@@ -335,53 +412,7 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
         </div>
       </div>
 
-      {/* Modal Preview Konten Template */}
-      {isPreviewOpen && previewItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsPreviewOpen(false)}></div>
-          <div className="bg-white w-full max-w-2xl rounded-2xl p-0 shadow-2xl relative z-10 flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200 overflow-hidden border border-slate-200">
-            
-            <div className="bg-slate-50 border-b border-slate-100 px-6 py-5 flex items-start justify-between shrink-0">
-              <div>
-                <h3 className="text-lg font-black text-slate-800 tracking-tight leading-tight flex items-center gap-2">
-                  <Eye size={18} className="text-indigo-500" /> Preview: {previewItem.nama_template}
-                </h3>
-                <p className="text-[10px] font-bold text-slate-500 mt-1 uppercase tracking-widest">
-                  {previewItem.is_docx ? 'DOKUMEN WORD (.DOCX)' : 'DOKUMEN TEKS MANUAL'}
-                </p>
-              </div>
-              <button onClick={() => setIsPreviewOpen(false)} className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 w-8 h-8 rounded-full flex items-center justify-center transition-colors bg-white border border-slate-200 shadow-sm">
-                <X size={16} />
-              </button>
-            </div>
-            
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-6 bg-slate-100/50">
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm min-h-[300px] text-sm font-serif leading-relaxed text-slate-800 overflow-hidden">
-                {previewItem.is_docx ? (
-                  <div className="h-full flex flex-col items-center justify-center p-10 text-center">
-                    <FileBadge size={48} className="mb-4 text-slate-300" />
-                    <p className="font-bold text-slate-500 mb-1">Preview Tidak Tersedia</p>
-                    <p className="text-xs text-slate-400">File ini adalah format native Microsoft Word. Preview dimatikan agar format tidak hancur.</p>
-                  </div>
-                ) : (
-                  <div className="whitespace-pre-wrap">{previewItem.konten}</div>
-                )}
-              </div>
-            </div>
 
-            <div className="p-4 border-t border-slate-100 bg-white shrink-0">
-              <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase tracking-widest">Variabel yang digunakan ({previewItem.variables?.length || 0}):</p>
-              <div className="flex flex-wrap gap-1.5">
-                {previewItem.variables && previewItem.variables.map(v => (
-                  <span key={v} className="text-[10px] bg-slate-50 text-slate-600 px-2 py-1 rounded border border-slate-200 font-mono shadow-sm">
-                    {`{{${v}}}`}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Modal Input/Edit Template - Ultra Premium */}
       {isModalOpen && (
@@ -546,6 +577,39 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation Modal */}
+      {confirmConfig.isOpen && (
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}></div>
+          <div className="relative bg-white w-full max-w-sm rounded-3xl shadow-2xl p-6 text-center animate-in fade-in zoom-in-95 duration-300 slide-in-from-bottom-8">
+            <div className={`w-16 h-16 mx-auto rounded-2xl flex items-center justify-center mb-4 ${confirmConfig.type === 'danger' ? 'bg-red-50 text-red-500 shadow-red-500/20' : 'bg-indigo-50 text-indigo-500 shadow-indigo-500/20'} shadow-lg`}>
+              {confirmConfig.type === 'danger' ? <AlertTriangle size={32} /> : <Info size={32} />}
+            </div>
+            <h3 className="text-xl font-bold text-slate-800 mb-2">{confirmConfig.title}</h3>
+            <p className="text-sm font-medium text-slate-500 mb-8">{confirmConfig.desc}</p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmConfig(prev => ({ ...prev, isOpen: false }))}
+                className="flex-1 px-4 py-3 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition-colors flex items-center justify-center gap-2"
+              >
+                <X size={18} />
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  if (confirmConfig.onConfirm) confirmConfig.onConfirm();
+                  setConfirmConfig(prev => ({ ...prev, isOpen: false }));
+                }}
+                className={`flex-1 px-4 py-3 rounded-xl font-bold text-white shadow-lg transition-colors flex items-center justify-center gap-2 ${confirmConfig.type === 'danger' ? 'bg-red-500 hover:bg-red-600 shadow-red-500/30' : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-500/30'}`}
+              >
+                {confirmConfig.type === 'danger' ? <Trash size={18} /> : <Check size={18} />}
+                {confirmConfig.actionLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}
