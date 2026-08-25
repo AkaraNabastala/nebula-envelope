@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('window:minimize'),
   maximize: () => ipcRenderer.send('window:maximize'),
   close: () => ipcRenderer.send('window:close'),
-  printDocx: (filePath) => ipcRenderer.send('print-docx', filePath),
+  printDocx: (filePath) => ipcRenderer.invoke('print-docx', filePath),
+  cetakSuratFisik: (filePath) => ipcRenderer.invoke('print-docx', filePath),
   isElectron: true
 });

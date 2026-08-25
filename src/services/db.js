@@ -239,10 +239,15 @@ export async function getDashboardStats() {
   return await fetchAPI('/dashboard/stats').catch(() => null);
 }
 
-export async function resetPasswordAdmin(newPassword) {
-  // Implementasi endpoint khusus reset password jika diperlukan
-  // Untuk saat ini fallback ke pesan sukses palsu
-  console.log("Password reset functionality to be implemented in backend");
+export async function resetPasswordAdmin(username, master_pin, new_password) {
+  const res = await fetchAPI('/auth/reset', {
+    method: 'POST',
+    body: JSON.stringify({ username, master_pin, new_password })
+  });
+  
+  if (res.error) {
+    throw new Error(res.error);
+  }
   return true;
 }
 

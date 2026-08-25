@@ -6,7 +6,7 @@ import { Save, Calendar, Printer, FileText, CheckCircle2, ChevronRight, Zap, Eye
 import QRCode from 'qrcode';
 import { toast } from 'sonner';
 
-export default function CreateLetter({ templates, masterData, settings, outgoingCount, onLetterCreated }) {
+export default function CreateLetter({ templates, masterData, settings, onLetterCreated, outgoingCount, onOpenFolderPicker, onViewDocument, isSidebarOpen }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState(null);
 
@@ -222,20 +222,70 @@ export default function CreateLetter({ templates, masterData, settings, outgoing
            window.print();
            actionMessage = 'Surat berhasil disimpan & dicetak.';
          } else {
-           if (window.electronAPI && window.electronAPI.cetakSuratFisik) {
-             const res = await window.electronAPI.cetakSuratFisik(filePath);
+           if (window.api && window.api.cetakSuratFisik) {
+             window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'print', title: 'Mencetak Dokumen...', subtitle: 'Mengirim dokumen ke mesin printer.' } }));
+             const res = await window.api.cetakSuratFisik(filePath);
+             window.dispatchEvent(new CustomEvent('hide-processing'));
              if (res.success) {
                actionMessage = 'Surat DOCX berhasil dikirim ke Printer.';
              } else {
-               toast.error('Gagal Cetak DOCX', { description: res.error });
+               window.dispatchEvent(new CustomEvent('show-toast', { detail: { title: 'Gagal Cetak', message: res.error, type: 'error' } }));
              }
            }
          }
        }
        
        if (actionConvert) {
-         // DOCX sudah tersimpan di titik ini, kita beri info untuk konversi
-         toast.info('Info Konversi', { description: 'Gunakan fitur "Convert to PDF" di menu Pusat Arsip untuk dokumen ini.' });
+         if (selectedTemplate?.is_docx) {
+           const secretKey = "LkAHyYTrm2Ef800RLFyoYYlqlmnRF6Uj";
+           toast.loading('Konversi PDF...', { description: 'Menghubungkan ke ConvertAPI...', id: 'pdf-convert' });
+           try {
+             const localFileRes = await fetch(`${API_BASE_URL}/download?path=${encodeURIComponent(filePath)}`);
+             if (!localFileRes.ok) throw new Error("Gagal membaca dokumen asli.");
+             const fileBlob = await localFileRes.blob();
+
+             const formData = new FormData();
+             formData.append('File', fileBlob, generatedFileName + '.docx');
+             formData.append('StoreFile', 'true');
+
+             const convertRes = await fetch('https://v2.convertapi.com/convert/docx/to/pdf', {
+               method: 'POST',
+               headers: { 'Authorization': `Bearer ${secretKey}` },
+               body: formData
+             });
+
+             if (!convertRes.ok) throw new Error('Konversi ditolak oleh server ConvertAPI.');
+             const result = await convertRes.json();
+             if (result.Files && result.Files.length > 0) {
+               const pdfUrl = result.Files[0].Url;
+               const pdfRes = await fetch(pdfUrl);
+               const pdfBlob = await pdfRes.blob();
+               const reader = new FileReader();
+               reader.readAsDataURL(pdfBlob);
+               reader.onloadend = async () => {
+                 const base64data = reader.result.split(',')[1];
+                 const finalPdfName = `${generatedFileName}.pdf`;
+                 if (window.api && window.api.saveFile) {
+                   await window.api.saveFile({
+                     folderPath: folderTarget,
+                     fileName: finalPdfName,
+                     fileData: base64data,
+                     isBase64: true
+                   });
+                   toast.dismiss('pdf-convert');
+                 }
+               };
+             } else {
+               throw new Error('Hasil konversi kosong.');
+             }
+           } catch (error) {
+             let errorMsg = error.message;
+             if (errorMsg && errorMsg.includes('Failed to fetch')) errorMsg = "Gagal terhubung ke server konversi. Harap periksa koneksi internet Anda.";
+             toast.error('Gagal Konversi', { id: 'pdf-convert', description: errorMsg });
+           }
+         } else {
+           toast.error('Format Tidak Didukung', { description: 'Konversi PDF saat ini hanya mendukung format DOCX.' });
+         }
        }
        
        triggerToast('Sukses!', actionMessage);
@@ -456,7 +506,7 @@ export default function CreateLetter({ templates, masterData, settings, outgoing
         </div>
 
         {/* STICKY FOOTER (Action Bar) */}
-        <div className="fixed bottom-0 left-0 lg:left-64 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-200/60 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50 px-6 py-4 lg:py-5 flex items-center justify-center">
+        <div className={`fixed bottom-0 right-0 ${isSidebarOpen ? 'lg:left-[280px]' : 'lg:left-[60px]'} left-0 bg-white/90 backdrop-blur-xl border-t border-slate-200/60 shadow-[0_-10px_40px_rgba(0,0,0,0.05)] z-50 px-6 py-4 lg:py-5 flex items-center justify-center transition-all duration-300`}>
           <div className="w-full max-w-7xl flex flex-col md:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4 text-slate-600 text-xs font-bold">
               {isSaved ? (

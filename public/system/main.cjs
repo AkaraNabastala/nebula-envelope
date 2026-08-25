@@ -116,12 +116,16 @@ function initDatabase() {
   // Migrations for existing databases
   try { db.exec("ALTER TABLE settings ADD COLUMN enable_qrcode INTEGER DEFAULT 0;"); } catch(e) {}
   try { db.exec("ALTER TABLE settings ADD COLUMN convertapi_secret TEXT;"); } catch(e) {}
+  try { db.exec("ALTER TABLE settings ADD COLUMN logo_base64 TEXT;"); } catch(e) {}
+  try { db.exec("ALTER TABLE settings ADD COLUMN login_bg_base64 TEXT;"); } catch(e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'operator';"); } catch(e) {}
   try { db.exec("ALTER TABLE users ADD COLUMN nama_lengkap TEXT DEFAULT 'Pengguna';"); } catch(e) {}
   try { db.exec("ALTER TABLE outgoing_letters ADD COLUMN status TEXT DEFAULT 'Draf';"); } catch(e) {}
 
   // Update existing admin to be admin role if just migrated
   try { db.prepare("UPDATE users SET role = 'admin' WHERE username = 'admin' AND role = 'operator'").run(); } catch(e) {}
+  try { db.prepare("UPDATE users SET username = 'administrator', password = 'admin123' WHERE username = 'admin'").run(); } catch(e) {}
+  try { db.prepare("UPDATE settings SET master_pin = '123987' WHERE master_pin = '123456'").run(); } catch(e) {}
 
   // Seed default settings
   const settingsCount = db.prepare('SELECT count(*) as count FROM settings').get();
@@ -135,7 +139,7 @@ function initDatabase() {
         'D:/data/surat/masuk', 
         'SURAT-{NO_URUT}/{BULAN_ROMAWI}/{TAHUN}', 
         0, 
-        '123456', 
+        '123987', 
         0, 
         0, 
         8080, 
@@ -165,7 +169,7 @@ function initDatabase() {
   // Seed user
   const userCount = db.prepare('SELECT count(*) as count FROM users').get();
   if (userCount.count === 0) {
-    db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)').run('admin', '123', 'admin');
+    db.prepare('INSERT INTO users (username, password, role) VALUES (?, ?, ?)').run('administrator', 'admin123', 'admin');
   }
 }
 initDatabase();
@@ -203,7 +207,7 @@ function startExpressServer(port) {
     res.json(data || {});
   });
   expressApp.post('/api/settings', (req, res) => {
-    const { nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected, master_pin, counter_surat_keluar, server_enabled, server_port, enable_qrcode, convertapi_secret } = req.body;
+    const { nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected, master_pin, counter_surat_keluar, server_enabled, server_port, enable_qrcode, convertapi_secret, logo_base64, login_bg_base64 } = req.body;
     
     // First ensure there is at least one row
     const count = db.prepare('SELECT count(*) as count FROM settings').get();
@@ -214,8 +218,23 @@ function startExpressServer(port) {
     db.prepare(`
       UPDATE settings SET 
         nama_instansi = ?, folder_surat_keluar = ?, folder_surat_masuk = ?, format_nomor_default = ?, 
-        manual_folder_selected = ?, master_pin = ?, counter_surat_keluar = ?, server_enabled = ?, server_port = ?, enable_qrcode = ?, convertapi_secret = ?
-    `).run(nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected ? 1 : 0, master_pin, counter_surat_keluar, server_enabled ? 1 : 0, server_port, enable_qrcode ? 1 : 0, convertapi_secret || '');
+        manual_folder_selected = ?, master_pin = ?, counter_surat_keluar = ?, server_enabled = ?, server_port = ?, enable_qrcode = ?, convertapi_secret = ?,
+        logo_base64 = ?, login_bg_base64 = ?
+    `).run(
+      nama_instansi || '', 
+      folder_surat_keluar || '', 
+      folder_surat_masuk || '', 
+      format_nomor_default || '', 
+      manual_folder_selected ? 1 : 0, 
+      master_pin || '123987', 
+      counter_surat_keluar || 0, 
+      server_enabled ? 1 : 0, 
+      server_port || 8080, 
+      enable_qrcode ? 1 : 0, 
+      convertapi_secret || '', 
+      logo_base64 || '', 
+      login_bg_base64 || ''
+    );
     
     res.json({ success: true });
   });
@@ -232,6 +251,30 @@ function startExpressServer(port) {
       addAuditLog(`Percobaan login gagal untuk: ${username}`);
       res.status(401).json({ error: 'Unauthorized' });
     }
+  });
+
+  expressApp.post('/api/auth/reset', (req, res) => {
+    const { username, master_pin, new_password } = req.body;
+    
+    // Verifikasi master pin
+    const config = db.prepare("SELECT master_pin FROM settings WHERE id = 'config'").get();
+    const validPin = config && config.master_pin ? config.master_pin : '123987';
+    
+    if (master_pin !== validPin) {
+      addAuditLog(`Percobaan reset sandi gagal (PIN salah) untuk: ${username}`);
+      return res.status(401).json({ error: 'Master PIN salah' });
+    }
+    
+    // Pastikan user ada
+    const user = db.prepare('SELECT username FROM users WHERE username = ?').get(username);
+    if (!user) {
+      return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
+    }
+    
+    // Update password
+    db.prepare('UPDATE users SET password = ? WHERE username = ?').run(new_password, username);
+    addAuditLog(`Sandi berhasil direset menggunakan Master PIN untuk: ${username}`);
+    res.json({ success: true });
   });
 
   // Users API (RBAC)
@@ -665,8 +708,6 @@ function startExpressServer(port) {
   // it's better to handle restore via IPC to let user select a file via Native Dialog.
 
 
-  const bindAddress = db.prepare("SELECT server_enabled FROM settings WHERE id = 'config'").get()?.server_enabled === 1 ? '0.0.0.0' : '127.0.0.1';
-  
   expressApp.get('/api/ip', (req, res) => {
     const interfaces = os.networkInterfaces();
     let localIp = '127.0.0.1';
@@ -679,6 +720,7 @@ function startExpressServer(port) {
             }
         }
         if (localIp !== '127.0.0.1') break;
+    }
     res.json({ ip: localIp });
   });
 
@@ -818,8 +860,14 @@ function startExpressServer(port) {
     }
   });
 
+  const bindAddress = db.prepare("SELECT server_enabled FROM settings WHERE id = 'config'").get()?.server_enabled === 1 ? '0.0.0.0' : '127.0.0.1';
+
   server = expressApp.listen(port, bindAddress, () => {
-    console.log(`Express Server running on ${bindAddress}:${port}`);
+    const actualPort = server.address().port;
+    console.log(`Express Server running on ${bindAddress}:${actualPort}`);
+    if (actualPort !== port) {
+      db.prepare("UPDATE settings SET server_port = ? WHERE id = 'config'").run(actualPort);
+    }
   });
 }
 
@@ -967,15 +1015,17 @@ ipcMain.handle('server:toggle', (event, { enabled, port }) => {
 ipcMain.handle('dialog:pilihFileRestore', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
-    filters: [{ name: 'SQLite Database', extensions: ['sqlite'] }]
+    filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false };
   
   const selectedPath = result.filePaths[0];
+  const name = path.basename(selectedPath);
+  return { success: true, filePath: selectedPath, fileName: name };
+});
+
+ipcMain.handle('db:jalankanRestore', async (event, selectedPath) => {
   try {
-    // Copy the selected file to override current dbPath
-    // In production, we should close DB first, copy, then restart app/db.
-    // For simplicity, we just copy over it (better-sqlite3 might throw if locked, but let's try)
     fs.copyFileSync(selectedPath, dbPath);
     return { success: true };
   } catch (err) {
@@ -1024,7 +1074,6 @@ ipcMain.handle('dialog:pilihFileDocx', async () => {
 
 // Print DOCX Natively via PowerShell (Windows only) - Changed to just open file based on user request
 ipcMain.on('print-docx', (event, filePath) => {
-    // Convert path to windows format if needed
     let winPath = filePath;
     if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
         winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
@@ -1038,6 +1087,23 @@ ipcMain.on('print-docx', (event, filePath) => {
     });
 });
 
+ipcMain.handle('fs:openFile', async (event, filePath) => {
+    try {
+        let winPath = filePath;
+        if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
+            winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
+        }
+        if (!fs.existsSync(winPath)) {
+             return { success: false, error: 'File tidak ditemukan' };
+        }
+        const error = await shell.openPath(winPath);
+        if (error) return { success: false, error };
+        return { success: true };
+    } catch (err) {
+        return { success: false, error: err.message };
+    }
+});
+
 // Print DOCX silently in background via PowerShell
 ipcMain.handle('fs:cetakSuratFisik', async (event, filePath) => {
     try {
@@ -1049,8 +1115,9 @@ ipcMain.handle('fs:cetakSuratFisik', async (event, filePath) => {
         console.log(`Printing file via PowerShell: ${winPath}`);
         return new Promise((resolve) => {
             const { exec } = require('child_process');
+            const psPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
             // Execute PowerShell command to print the document hidden in the background
-            exec(`powershell.exe -WindowStyle Hidden -Command "Start-Process -FilePath '${winPath}' -Verb Print -WindowStyle Hidden"`, (error) => {
+            exec(`"${psPath}" -WindowStyle Hidden -Command "Start-Process -FilePath '${winPath}' -Verb Print -WindowStyle Hidden"`, (error) => {
                 if (error) {
                     console.error('Print error:', error);
                     resolve({ success: false, error: error.message });

@@ -114,7 +114,7 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
             setNamaTemplate(result.name.replace('.docx', ''));
           }
           setIsModalOpen(true);
-          toast.success("File DOCX berhasil diimpor!");
+          // triggerToast removed based on user request (only show when saving)
         } else if (result && result.error) {
           toast.error(result.error);
         }
@@ -155,7 +155,7 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
           setNamaTemplate(file.name.replace('.docx', ''));
         }
         if (onTemplatesUpdated) onTemplatesUpdated();
-        triggerToast('Berhasil!', 'File DOCX berhasil diimpor! Silahkan klik Simpan.');
+        // triggerToast removed based on user request (only show when saving)
       } catch (err) {
         toast.error("Gagal membaca file .docx!");
         console.error(err);
@@ -200,7 +200,7 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
 
     try {
       setIsModalOpen(false); // Tutup modal duluan biar kelihatan progressnya
-      window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'upload', title: 'Mengunggah Template', subtitle: 'Proses uploading ke cloud...' } }));
+      window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'upload', title: 'Mengunggah Template', subtitle: 'Proses uploading ke Nebula Envelope...' } }));
       
       setTimeout(async () => {
         try {
@@ -246,12 +246,14 @@ export default function TemplateManager({ templates, onTemplatesUpdated }) {
       desc: 'Apakah Anda yakin ingin menghapus template ini secara permanen?',
       actionLabel: 'Hapus',
       onConfirm: async () => {
-        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Template', subtitle: 'Membuang data ke tempat sampah...' } }));
+        window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'delete', title: 'Menghapus Template', subtitle: 'Menghapus data dari sistem...' } }));
         setTimeout(async () => {
           await deleteTemplate(id);
           window.dispatchEvent(new CustomEvent('hide-processing'));
           if (onTemplatesUpdated) onTemplatesUpdated();
-          triggerToast('Berhasil!', 'Template berhasil dihapus.');
+          setTimeout(() => {
+            triggerToast('Sukses!', 'Template berhasil dihapus.');
+          }, 300);
         }, 1500);
       }
     });

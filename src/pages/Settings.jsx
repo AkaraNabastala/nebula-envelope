@@ -19,6 +19,7 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
   // Backup/Restore State
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const [selectedRestoreFile, setSelectedRestoreFile] = useState(null);
 
   // Logo & Login Background State
   const [logoBase64, setLogoBase64] = useState(settings?.logo_base64 || '');
@@ -32,6 +33,8 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
   const [showPassword, setShowPassword] = useState(false);
   const [newRole, setNewRole] = useState('operator');
   const [isEditingUser, setIsEditingUser] = useState(false);
+  const [detailUser, setDetailUser] = useState(null);
+  const [showDetailPassword, setShowDetailPassword] = useState(false);
 
   const fetchUsersList = async () => {
     const list = await getUsers();
@@ -124,31 +127,50 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
 
   const handleBackup = () => {
     setIsBackingUp(true);
-    window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'download', title: 'Mencadangkan Database', subtitle: 'Mengunduh file backup.db...' } }));
+    window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'download', title: 'Mencadangkan Database', subtitle: 'Menyiapkan dan mengunduh file backup.db...' } }));
     setTimeout(() => {
       window.location.href = `${API_BASE_URL}/backup`;
       setIsBackingUp(false);
       window.dispatchEvent(new CustomEvent('hide-processing'));
+      triggerToast('Berhasil!', 'Backup berhasil diunduh!');
     }, 2000);
   };
 
-  const handleRestore = async () => {
+  const handleSelectRestoreFile = async () => {
     if (window.api && window.api.pilihFileRestore) {
-      setIsRestoring(true);
-      window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'upload', title: 'Memulihkan Database', subtitle: 'Membaca dan memuat file backup.db...' } }));
-      setTimeout(async () => {
-        try {
-          const res = await window.api.pilihFileRestore();
-          if (res && res.success) {
-            toast.success('Database berhasil dipulihkan! Aplikasi akan ditutup. Silakan buka kembali.');
-          }
-        } finally {
-          setIsRestoring(false);
-          window.dispatchEvent(new CustomEvent('hide-processing'));
-        }
-      }, 1500);
+      const res = await window.api.pilihFileRestore();
+      if (res && res.success) {
+        setSelectedRestoreFile({ path: res.filePath, name: res.fileName });
+      }
     } else {
       toast.error('Fitur Restore hanya tersedia di Desktop App.');
+    }
+  };
+
+  const executeRestore = async () => {
+    if (!selectedRestoreFile) return;
+    
+    setIsRestoring(true);
+    window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'upload', title: 'Memulihkan Database', subtitle: `Mengunggah ${selectedRestoreFile.name} dan memulihkan data...` } }));
+    
+    try {
+      // Artificial delay for animation
+      await new Promise(r => setTimeout(r, 2000));
+      
+      const res = await window.api.jalankanRestore(selectedRestoreFile.path);
+      if (res && res.success) {
+        window.dispatchEvent(new CustomEvent('hide-processing'));
+        triggerToast('Berhasil!', 'Database berhasil dipulihkan! Memuat ulang sistem...');
+        setTimeout(() => {
+          window.location.reload();
+        }, 500);
+      } else {
+        throw new Error(res.error || 'Terjadi kesalahan');
+      }
+    } catch (e) {
+      window.dispatchEvent(new CustomEvent('hide-processing'));
+      toast.error('Gagal memulihkan database', { description: e.message });
+      setIsRestoring(false);
     }
   };
 
@@ -177,7 +199,7 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
       format_nomor_default: formatNomor,
       counter_surat_keluar: parseInt(counterKeluar, 10) || 0,
       server_enabled: lanAkses ? 1 : 0,
-      server_port: parseInt(serverPort, 10) || 8080,
+      server_port: !isNaN(parseInt(serverPort, 10)) ? parseInt(serverPort, 10) : 8080,
       enable_qrcode: enableQrcode ? 1 : 0,
       convertapi_secret: convertapiSecret,
       manual_folder_selected: 1,
@@ -187,9 +209,10 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
 
     await saveSettings(newSettings);
 
+    const actualPort = !isNaN(parseInt(serverPort, 10)) ? parseInt(serverPort, 10) : 8080;
     if (window.api && window.api.toggleServer) {
-      await window.api.toggleServer(lanAkses, parseInt(serverPort, 10) || 8080);
-      setApiPort(parseInt(serverPort, 10) || 8080);
+      await window.api.toggleServer(lanAkses, actualPort);
+      setApiPort(actualPort);
     }
 
     if (onSettingsSaved) onSettingsSaved();
@@ -596,19 +619,42 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
                 <p className="text-sm text-slate-500 mb-6 flex-1">
                   Pulihkan data sistem dari file backup (.db) yang pernah Anda buat sebelumnya. (Akan menimpa data saat ini!)
                 </p>
-                <button
-                  type="button"
-                  onClick={handleRestore}
-                  disabled={isRestoring}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl border-2 border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-bold text-base transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {isRestoring ? (
-                    <div className="w-5 h-5 border-2 border-amber-600/30 border-t-amber-600 rounded-full animate-spin" />
-                  ) : (
-                    <Upload size={20} />
-                  )}
-                  {isRestoring ? 'Memulihkan Data...' : 'Restore Data'}
-                </button>
+                
+                {!selectedRestoreFile ? (
+                  <button
+                    type="button"
+                    onClick={handleSelectRestoreFile}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl border-2 border-slate-200 hover:border-amber-400 hover:bg-amber-50 text-slate-700 hover:text-amber-700 font-bold text-base transition-all hover:-translate-y-0.5"
+                  >
+                    <Folder size={20} />
+                    Pilih File Database
+                  </button>
+                ) : (
+                  <div className="w-full flex flex-col gap-3">
+                    <div className="flex items-center justify-between p-3 bg-amber-50 rounded-xl border border-amber-100">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <Database size={16} className="text-amber-500 shrink-0" />
+                        <span className="text-xs font-semibold text-amber-900 truncate">{selectedRestoreFile.name}</span>
+                      </div>
+                      <button onClick={() => setSelectedRestoreFile(null)} className="text-slate-400 hover:text-red-500 transition-colors p-1" title="Batal">
+                        <X size={16} />
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={executeRestore}
+                      disabled={isRestoring}
+                      className="w-full flex items-center justify-center gap-2 px-6 py-4 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-base shadow-lg shadow-amber-500/20 transition-all hover:-translate-y-0.5 disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {isRestoring ? (
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <Upload size={20} />
+                      )}
+                      {isRestoring ? 'Memulihkan Data...' : 'Upload & Restore'}
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -769,7 +815,8 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
                           <td className="px-6 py-4 whitespace-nowrap text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               <button type="button" onClick={() => {
-                                toast.info('Detail Pengguna', { description: `Nama: ${u.nama_lengkap}\nUsername: ${u.username}\nRole: ${u.role.toUpperCase()}` });
+                                setDetailUser(u);
+                                setShowDetailPassword(false);
                               }} className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 hover:shadow-md transition-all" title={`Lihat Detail ${u.username}`}>
                                 <Eye size={16} />
                               </button>

@@ -113,16 +113,17 @@ ipcMain.on('window:close', () => {
 });
 
 // 5. Print DOCX Natively via PowerShell (Windows only)
-ipcMain.on('print-docx', (event, filePath) => {
-    // Memanggil PowerShell di Windows untuk mencetak dokumen secara "Silent"
-    // Perintah ini akan menyuruh Windows mencetak menggunakan aplikasi default (MS Word)
-    const command = `powershell -command "Start-Process -FilePath '${filePath}' -Verb Print -PassThru | %{sleep 5;$_} | Stop-Process"`;
-    
-    exec(command, (error, stdout, stderr) => {
-        if (error) {
-            console.error(`Error printing DOCX: ${error.message}`);
-        } else {
-            console.log(`Print triggered for: ${filePath}`);
-        }
+ipcMain.handle('print-docx', async (event, filePath) => {
+    return new Promise((resolve) => {
+        const command = `powershell -command "Start-Process -FilePath '${filePath}' -Verb Print -PassThru | %{sleep 5;$_} | Stop-Process"`;
+        exec(command, (error, stdout, stderr) => {
+            if (error) {
+                console.error(`Error printing DOCX: ${error.message}`);
+                resolve({ success: false, error: error.message });
+            } else {
+                console.log(`Print triggered for: ${filePath}`);
+                resolve({ success: true });
+            }
+        });
     });
 });

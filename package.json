@@ -16,14 +16,15 @@
   },
   "build": {
     "appId": "com.sistemsurat.app",
-    "productName": "Sistem Surat",
+    "productName": "nebula-envelope",
     "directories": {
       "output": "release"
     },
     "win": {
       "target": [
-        "nsis"
-      ]
+        "dir"
+      ],
+      "icon": "inno-setup/icon.ico"
     },
     "files": [
       "dist/**/*",

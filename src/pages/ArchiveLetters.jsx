@@ -5,7 +5,8 @@ import { toast } from 'sonner';
 import * as XLSX from 'xlsx';
 
 export default function ArchiveLetters({ incomingArchives, outgoingLetters, settings, onArchiveAdded, onViewDocument, onOpenFolderPicker }) {
-  const [activeSubTab, setActiveSubTab] = useState('keluar'); // 'masuk' atau 'keluar'
+  const [activeSubTab, setActiveSubTab] = useState('keluar');
+  const [printHtmlContent, setPrintHtmlContent] = useState(null); // 'masuk' atau 'keluar'
   
   // State Form Modal Tambah Arsip Masuk
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -210,38 +211,53 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
 
   const handleSimpanArsip = async (e) => {
     e.preventDefault();
+    window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'upload', title: 'Menyimpan Arsip', subtitle: 'Sedang memproses dokumen masuk...' } }));
 
-    const folderTarget = settings?.folder_surat_masuk || 'D:/data/surat/masuk';
+    try {
+      const folderTarget = settings?.folder_surat_masuk || 'D:/data/surat/masuk';
 
-    if (fileBase64 && window.api && window.api.saveFile) {
-      const saveRes = await window.api.saveFile({
-        folderPath: folderTarget,
-        fileName: fileName,
-        fileData: fileBase64,
-        isBase64: true
-      });
-      if (!saveRes.success) {
-        toast.error("Gagal menyimpan file fisik", { description: saveRes.error });
-        return;
+      if (fileBase64 && window.api && window.api.saveFile) {
+        const saveRes = await window.api.saveFile({
+          folderPath: folderTarget,
+          fileName: fileName,
+          fileData: fileBase64,
+          isBase64: true
+        });
+        if (!saveRes.success) {
+          window.dispatchEvent(new CustomEvent('hide-processing'));
+          toast.error("Gagal menyimpan file fisik", { description: saveRes.error });
+          return;
+        }
       }
+
+      const archiveData = {
+        ...(isEditMode && { id: editingId }),
+        nomor_surat: nomorSurat,
+        pengirim: pengirim,
+        perihal: perihal,
+        tanggal_diterima: tanggalDiterima,
+        file_name: fileName || 'Tidak ada lampiran fisik',
+        folder_tersimpan: folderTarget,
+        file_path: fileName ? `${folderTarget}\\${fileName}`.replace(/\\\\/g, '\\') : ''
+      };
+
+      await saveIncomingArchive(archiveData);
+      
+      // Artificial delay so user can see the upload animation
+      await new Promise(r => setTimeout(r, 1500));
+      
+      if (onArchiveAdded) onArchiveAdded();
+      setIsModalOpen(false);
+      resetForm();
+      
+      window.dispatchEvent(new CustomEvent('hide-processing'));
+      setTimeout(() => {
+        triggerToast('Sukses!', isEditMode ? 'Arsip masuk berhasil diperbarui!' : 'Arsip masuk berhasil disimpan!');
+      }, 300);
+    } catch (err) {
+      window.dispatchEvent(new CustomEvent('hide-processing'));
+      toast.error('Gagal', { description: 'Terjadi kesalahan saat menyimpan arsip.' });
     }
-
-    const archiveData = {
-      ...(isEditMode && { id: editingId }), // Inject ID if editing
-      nomor_surat: nomorSurat,
-      pengirim: pengirim,
-      perihal: perihal,
-      tanggal_diterima: tanggalDiterima,
-      file_name: fileName || 'Tidak ada lampiran fisik',
-      folder_tersimpan: folderTarget,
-      file_path: fileName ? `${folderTarget}\\${fileName}`.replace(/\\\\/g, '\\') : ''
-    };
-
-    await saveIncomingArchive(archiveData);
-    if (onArchiveAdded) onArchiveAdded();
-    setIsModalOpen(false);
-    resetForm();
-    toast.success('Berhasil!', { description: 'Arsip masuk berhasil disimpan!' });
   };
 
   const handleConvertPdf = (item) => {
@@ -425,7 +441,9 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
             };
           } catch (e2) {
              toast.dismiss(loadingToast);
-             toast.error("Gagal Konversi Menyeluruh", { description: "ConvertAPI & iLovePDF gagal atau kehabisan limit." });
+             let errorMsg = "ConvertAPI & iLovePDF gagal atau kehabisan limit.";
+             if (e2.message && e2.message.includes('Failed to fetch')) errorMsg = "Gagal terhubung ke server konversi. Harap periksa koneksi internet Anda.";
+             toast.error("Gagal Konversi Menyeluruh", { description: errorMsg });
           }
         }
       }
@@ -614,8 +632,8 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
               </thead>
               <tbody className="divide-y divide-slate-100/50">
                 {activeSubTab === 'masuk' ? (
-                  incomingArchives && incomingArchives.length > 0 ? (
-                    incomingArchives.map((item, idx) => (
+                  activeItems && activeItems.length > 0 ? (
+                    activeItems.map((item, idx) => (
                       <tr key={idx} className="hover:bg-white transition-colors group">
                         <td className="px-6 py-4">
                           <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 cursor-pointer" />
@@ -633,26 +651,27 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => {
-                                if (item.file_path && window.electronAPI && window.electronAPI.printDocx) {
-                                  window.electronAPI.printDocx(item.file_path);
+                                if (item.file_path && window.api && window.api.openFile) {
+                                  window.api.openFile(item.file_path);
                                 } else {
-                                  toast.error('Gagal: File tidak ditemukan atau fitur khusus Desktop.');
+                                  toast.error('Gagal', { description: 'File tidak ditemukan atau fitur khusus Desktop.' });
                                 }
                               }}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-100 hover:shadow-md transition-all"
-                              title="Buka Dokumen"
+                              className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white flex items-center justify-center transition-all"
+                              title="Lihat File Asli"
                             >
-                              <Eye size={16} />
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                             </button>
                             <button
                               onClick={async () => {
-                                if (item.file_path && window.electronAPI && window.electronAPI.cetakSuratFisik) {
-                                  toast.info('Memproses Cetak...');
-                                  const res = await window.electronAPI.cetakSuratFisik(item.file_path);
-                                  if (res.success) toast.success('Berhasil!', { description: 'Dokumen dikirim ke Printer.' });
-                                  else toast.error('Gagal Cetak', { description: res.error });
+                                if (item.file_path && window.api && window.api.cetakSuratFisik) {
+                                  window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'print', title: 'Mencetak Dokumen...', subtitle: 'Mengirim dokumen ke mesin printer.' } }));
+                                  const res = await window.api.cetakSuratFisik(item.file_path);
+                                  window.dispatchEvent(new CustomEvent('hide-processing'));
+                                  if (res.success) triggerToast('Berhasil!', 'Dokumen dikirim ke Printer.');
+                                  else window.dispatchEvent(new CustomEvent('show-toast', { detail: { title: 'Gagal Cetak', message: res.error, type: 'error' } }));
                                 } else {
-                                  toast.error('Fitur cetak fisik tidak tersedia.');
+                                  toast.error('Gagal', { description: 'Fitur cetak fisik tidak tersedia.' });
                                 }
                               }}
                               className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 hover:shadow-md transition-all"
@@ -682,8 +701,8 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                     </tr>
                   )
                 ) : (
-                  outgoingLetters && outgoingLetters.length > 0 ? (
-                    outgoingLetters.map((item, idx) => (
+                  activeItems && activeItems.length > 0 ? (
+                    activeItems.map((item, idx) => (
                       <tr key={idx} className="hover:bg-white transition-colors group">
                         <td className="px-6 py-4">
                           <input type="checkbox" checked={selectedIds.includes(item.id)} onChange={() => toggleSelectOne(item.id)} className="w-4 h-4 rounded text-indigo-500 focus:ring-indigo-500 cursor-pointer" />
@@ -701,26 +720,36 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                           <div className="flex items-center justify-end gap-1.5">
                             <button
                               onClick={() => {
-                                if (item.file_path && window.electronAPI && window.electronAPI.printDocx) {
-                                  window.electronAPI.printDocx(item.file_path);
+                                if (item.file_path && window.api && window.api.openFile) {
+                                  window.api.openFile(item.file_path);
                                 } else {
-                                  toast.error('Gagal: File tidak ditemukan atau fitur khusus Desktop.');
+                                  toast.error('Gagal', { description: 'File tidak ditemukan atau fitur khusus Desktop.' });
                                 }
                               }}
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-blue-600 hover:bg-blue-100 hover:shadow-md transition-all"
-                              title="Buka Dokumen"
+                              className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-600 hover:text-white flex items-center justify-center transition-all"
+                              title="Lihat File Asli"
                             >
-                              <Eye size={16} />
+                              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                             </button>
                             <button
                               onClick={async () => {
-                                if (item.file_path && window.electronAPI && window.electronAPI.cetakSuratFisik) {
-                                  toast.info('Memproses Cetak...');
-                                  const res = await window.electronAPI.cetakSuratFisik(item.file_path);
-                                  if (res.success) toast.success('Berhasil!', { description: 'Dokumen dikirim ke Printer.' });
-                                  else toast.error('Gagal Cetak', { description: res.error });
+                                if (item.file_path) {
+                                  if (item.file_path && window.api && window.api.cetakSuratFisik) {
+                                    window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'print', title: 'Mencetak Dokumen...', subtitle: 'Mengirim dokumen ke mesin printer.' } }));
+                                    const res = await window.api.cetakSuratFisik(item.file_path);
+                                    window.dispatchEvent(new CustomEvent('hide-processing'));
+                                    if (res.success) triggerToast('Berhasil!', 'Dokumen dikirim ke Printer.');
+                                    else window.dispatchEvent(new CustomEvent('show-toast', { detail: { title: 'Gagal Cetak', message: res.error, type: 'error' } }));
+                                  } else {
+                                    toast.error('Gagal', { description: 'Fitur cetak fisik tidak tersedia.' });
+                                  }
                                 } else {
-                                  toast.error('Fitur cetak fisik tidak tersedia.');
+                                  if (item.konten) {
+                                    setPrintHtmlContent(item.konten);
+                                    setTimeout(() => window.print(), 100);
+                                  } else {
+                                    toast.error('Konten HTML tidak ditemukan.');
+                                  }
                                 }
                               }}
                               className="inline-flex items-center justify-center w-8 h-8 rounded-xl bg-slate-50 text-slate-400 hover:text-indigo-600 hover:bg-indigo-100 hover:shadow-md transition-all"
@@ -903,6 +932,26 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
               </button>
             </div>
           </div>
+        </div>
+      )}
+      
+      {/* PRINTABLE AREA FOR HTML LETTERS */}
+      {printHtmlContent && (
+        <div className="hidden print:block fixed inset-0 z-[99999] bg-white print-container">
+          <style>
+            {`
+            @media print {
+              @page { size: A4; margin: 20mm; }
+              body { -webkit-print-color-adjust: exact; print-color-adjust: exact; margin: 0; padding: 0; background: white; }
+              .print-container { 
+                position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
+                width: 100%; min-height: 100vh; z-index: 999999 !important; background: white;
+                font-family: 'Times New Roman', Times, serif; font-size: 12pt; line-height: 1.5; color: black;
+              }
+            }
+          `}
+          </style>
+          <div dangerouslySetInnerHTML={{ __html: printHtmlContent }} className="whitespace-pre-wrap" />
         </div>
       )}
     </div>

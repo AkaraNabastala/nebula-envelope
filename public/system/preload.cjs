@@ -64,14 +64,18 @@ contextBridge.exposeInMainWorld('api', {
   pilihFileRestore: () => {
     return ipcRenderer.invoke('dialog:pilihFileRestore');
   },
+  jalankanRestore: (filePath) => {
+    return ipcRenderer.invoke('db:jalankanRestore', filePath);
+  },
 
   // ----------------------------------------------------
-  // 7. FUNGSI HAPUS DATA
+  // 7. FUNGSI HAPUS & FILE
   // ----------------------------------------------------
   hapusEntitas: (id) => ipcRenderer.invoke('db:hapusEntitas', id),
   hapusSurat: (id) => ipcRenderer.invoke('db:hapusSurat', id),
   hapusSuratFisik: (filePath) => ipcRenderer.invoke('fs:hapusSuratFisik', filePath),
   cetakSuratFisik: (filePath) => ipcRenderer.invoke('fs:cetakSuratFisik', filePath),
+  openFile: (filePath) => ipcRenderer.invoke('fs:openFile', filePath),
   saveFile: (data) => ipcRenderer.invoke('fs:saveFile', data)
 });
 

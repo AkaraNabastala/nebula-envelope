@@ -189,30 +189,47 @@ export default function App() {
   const isElectronApp = !!(window.electronAPI || window.api);
 
   return (
-    <div className="flex flex-col h-screen overflow-hidden font-sans">
-      <Toaster position="top-right" richColors toastOptions={{ style: { marginTop: '16px', marginRight: '16px' } }} />
+    <div className="flex flex-col h-screen overflow-hidden font-sans relative bg-slate-50">
+      {settings?.login_bg_base64 && (
+        <div 
+          className="absolute inset-0 z-0 opacity-[0.03] bg-cover bg-center pointer-events-none mix-blend-multiply"
+          style={{ backgroundImage: `url(${settings.login_bg_base64})` }}
+        />
+      )}
+      <div className="relative z-10 flex flex-col h-full w-full pointer-events-none">
+        <div className="pointer-events-auto flex flex-col h-full w-full">
+          <Toaster position="top-right" richColors toastOptions={{ style: { marginTop: '16px', marginRight: '16px' } }} />
 
-      {/* SLEEK ANIMATED SUCCESS TOAST - PILL DESIGN */}
+      {/* SLEEK ANIMATED CUSTOM TOAST - PILL DESIGN */}
       {successToast && (
         <div className={`fixed top-16 right-8 z-[99999] flex flex-col items-end justify-center ${isClosingToast ? 'toast-exit-right' : 'toast-enter-right'}`}>
-          <div className="absolute inset-0 bg-emerald-400/20 blur-[30px] rounded-full w-full h-full animate-pulse pointer-events-none"></div>
+          <div className={`absolute inset-0 blur-[30px] rounded-full w-full h-full animate-pulse pointer-events-none ${successToast.type === 'error' ? 'bg-rose-500/20' : 'bg-emerald-400/20'}`}></div>
           
-          <div className="relative group overflow-hidden bg-slate-900/90 backdrop-blur-2xl border border-slate-700/50 rounded-full py-2 px-4 flex items-center gap-3 shadow-[0_15px_40px_-10px_rgba(16,185,129,0.4)] transition-all">
+          <div className={`relative group overflow-hidden bg-slate-900/90 backdrop-blur-2xl border border-slate-700/50 rounded-full py-2 px-4 flex items-center gap-3 transition-all ${successToast.type === 'error' ? 'shadow-[0_15px_40px_-10px_rgba(244,63,94,0.4)]' : 'shadow-[0_15px_40px_-10px_rgba(16,185,129,0.4)]'}`}>
             
             <div className="light-sweep-effect"></div>
 
             <div className="relative w-9 h-9 shrink-0 flex items-center justify-center z-10">
-              <div className="absolute inset-0 rounded-full border-2 border-slate-700 border-t-emerald-400 border-r-emerald-400 animate-[spin_2s_linear_infinite]"></div>
+              <div className={`absolute inset-0 rounded-full border-2 border-slate-700 animate-[spin_2s_linear_infinite] ${successToast.type === 'error' ? 'border-t-rose-500 border-r-rose-500' : 'border-t-emerald-400 border-r-emerald-400'}`}></div>
               
-              <div className="absolute inset-1 rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 flex items-center justify-center shadow-[0_0_15px_rgba(52,211,153,0.6)]">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" className="absolute opacity-50 ripple-ping"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="relative z-10 icon-bounce"><polyline points="20 6 9 17 4 12"></polyline></svg>
+              <div className={`absolute inset-1 rounded-full flex items-center justify-center ${successToast.type === 'error' ? 'bg-gradient-to-br from-rose-500 to-red-600 shadow-[0_0_15px_rgba(244,63,94,0.6)]' : 'bg-gradient-to-br from-emerald-400 to-teal-500 shadow-[0_0_15px_rgba(52,211,153,0.6)]'}`}>
+                {successToast.type === 'error' ? (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" className="absolute opacity-50 ripple-ping"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="relative z-10 icon-bounce"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                  </>
+                ) : (
+                  <>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" className="absolute opacity-50 ripple-ping"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="relative z-10 icon-bounce"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                  </>
+                )}
               </div>
             </div>
 
             <div className="flex-1 z-10 py-1">
-              <div className="text-[9px] font-black tracking-[0.2em] text-emerald-400 uppercase flex items-center gap-1.5 mb-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,1)]"></span>
+              <div className={`text-[9px] font-black tracking-[0.2em] uppercase flex items-center gap-1.5 mb-0.5 ${successToast.type === 'error' ? 'text-rose-400' : 'text-emerald-400'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${successToast.type === 'error' ? 'bg-rose-400 shadow-[0_0_8px_rgba(244,63,94,1)]' : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,1)]'}`}></span>
                 {successToast.title}
               </div>
               <p className="text-xs font-bold text-white leading-tight">{successToast.message}</p>
@@ -251,6 +268,14 @@ export default function App() {
                   <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-rose-500 z-10"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
                   <div className="absolute -top-4 w-6 h-8 bg-slate-200 rounded-sm animate-bounce opacity-80 rotate-12" style={{ animationDuration: '0.8s' }} />
                   <div className="absolute inset-0 rounded-full border-4 border-rose-100 border-t-rose-500 animate-spin" style={{ animationDuration: '2s' }} />
+                </div>
+              )}
+
+              {processingOverlay.type === 'print' && (
+                <div className="relative flex flex-col items-center justify-center w-full h-full">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-500 z-10"><polyline points="6 9 6 2 18 2 18 9"></polyline><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path><rect x="6" y="14" width="12" height="8"></rect></svg>
+                  <div className="absolute -top-6 w-8 h-10 bg-slate-200 rounded-sm animate-[bounce_1s_infinite] opacity-80" />
+                  <div className="absolute inset-0 rounded-full border-4 border-blue-100 border-t-blue-500 animate-spin" style={{ animationDuration: '2s' }} />
                 </div>
               )}
 
@@ -306,6 +331,7 @@ export default function App() {
                 onLetterCreated={() => refreshData()}
                 onOpenFolderPicker={() => setIsFolderPickerOpen(true)}
                 onViewDocument={(doc) => setViewingDocument(doc)}
+                isSidebarOpen={isSidebarOpen}
               />
             )}
 
@@ -358,7 +384,9 @@ export default function App() {
           onSaved={() => refreshData()}
         />
       )}
+        </div>
       </div>
     </div>
+  </div>
   );
 }
