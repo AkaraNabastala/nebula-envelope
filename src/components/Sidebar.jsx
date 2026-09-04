@@ -1,11 +1,12 @@
 import React from 'react';
-import { LayoutDashboard, FileEdit, Archive, FileText, Users, Settings, LogOut, Database, ShieldCheck } from 'lucide-react';
-import LogoNebula from '../assets/logonebula.png';
+import { LayoutDashboard, FileEdit, Archive, FileText, Users, Settings, LogOut, Database, ShieldCheck, Hash } from 'lucide-react';
+import LogoNebula from '../assets/icon.png';
 
 export default function Sidebar({ activeTab, setActiveTab, isOpen, setIsOpen, handleLogout, userRole, namaLengkap, settings }) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'buat-surat', label: 'Surat Baru', icon: FileEdit },
+    { id: 'nomor-surat', label: 'Nomor Surat', icon: Hash },
     { id: 'arsip', label: 'Pusat Arsip', icon: Archive },
     ...(userRole === 'admin' ? [{ id: 'templates', label: 'Template Surat', icon: FileText }] : []),
     { id: 'master-data', label: 'Data Users', icon: Users },

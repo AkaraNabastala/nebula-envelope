@@ -152,6 +152,13 @@ export async function deleteOutgoingLetter(id) {
   await fetchAPI(`/outgoing/${id}`, { method: 'DELETE' });
 }
 
+export async function bulkDeleteOutgoingLetters(ids) {
+  await fetchAPI(`/outgoing/bulk/delete`, {
+    method: 'POST',
+    body: JSON.stringify({ ids })
+  });
+}
+
 export async function saveOutgoingLetter(letter) {
   const res = await fetchAPI('/outgoing', {
     method: 'POST',

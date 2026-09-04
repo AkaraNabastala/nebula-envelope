@@ -26,6 +26,10 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
   
   const activeItems = (activeSubTab === 'masuk' ? incomingArchives : outgoingLetters)
     .filter(item => {
+      if (activeSubTab === 'keluar' && (item.status === 'Reserved' || item.status === 'Manual' || !item.file_path)) {
+        return false;
+      }
+      
       if (!searchQuery) return true;
       const lowerQuery = searchQuery.toLowerCase();
       return (
@@ -627,6 +631,7 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                   <th className="px-6 py-4">Nomor Surat</th>
                   <th className="px-6 py-4">Perihal</th>
                   <th className="px-6 py-4">Tanggal Pembuatan</th>
+                  <th className="px-6 py-4">Tag Verifikasi</th>
                   <th className="px-6 py-4 text-right rounded-r-xl">Aksi</th>
                 </tr>
               </thead>
@@ -646,6 +651,9 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-xs font-bold text-slate-600">{formatTanggal(item.tanggal_diterima)}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="text-[10px] font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded-md">-</span>
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
@@ -715,6 +723,13 @@ export default function ArchiveLetters({ incomingArchives, outgoingLetters, sett
                         </td>
                         <td className="px-6 py-4">
                           <span className="text-xs font-bold text-slate-600">{formatTanggal(item.created_at)}</span>
+                        </td>
+                        <td className="px-6 py-4">
+                          {item.document_tag ? (
+                              <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest bg-emerald-100 inline-block px-2 py-1 rounded-md">{item.document_tag}</span>
+                          ) : (
+                              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest bg-slate-100 inline-block px-2 py-1 rounded-md">-</span>
+                          )}
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">

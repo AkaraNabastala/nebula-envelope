@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { saveSettings, getSettings, saveUser, deleteUser, getUsers, resetPasswordAdmin, triggerReload, triggerToast, setApiPort, API_BASE_URL } from '../services/db';
-import { Settings as SettingsIcon, Folder, Save, Globe, FileDigit, HelpCircle, Users, ShieldCheck, Download, Upload, QrCode, Trash2, Plus, Database, AlertTriangle, Info, Eye, EyeOff, UserCog, AtSign, Key, X, Check, Trash } from 'lucide-react';
+import { Settings as SettingsIcon, Folder, Save, Globe, FileDigit, HelpCircle, Users, ShieldCheck, Download, Upload, QrCode, Trash2, Plus, Database, AlertTriangle, Info, Eye, EyeOff, UserCog, AtSign, Key, X, Check, Trash, Shield } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker, mode = 'general' }) {
@@ -13,6 +13,8 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
   const [serverPort, setServerPort] = useState(settings?.server_port || 8080);
   const [enableQrcode, setEnableQrcode] = useState(settings?.enable_qrcode === 1 || false);
   const [convertapiSecret, setConvertapiSecret] = useState(settings?.convertapi_secret || '');
+  const [enableTag, setEnableTag] = useState(settings?.enable_tag === 1 || false);
+  const [tagPrefix, setTagPrefix] = useState(settings?.tag_prefix || 'DOC');
 
   const [confirmConfig, setConfirmConfig] = useState({ isOpen: false, title: '', desc: '', actionLabel: '', onConfirm: null, type: 'danger' });
 
@@ -201,6 +203,8 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
       server_enabled: lanAkses ? 1 : 0,
       server_port: !isNaN(parseInt(serverPort, 10)) ? parseInt(serverPort, 10) : 8080,
       enable_qrcode: enableQrcode ? 1 : 0,
+      enable_tag: enableTag ? 1 : 0,
+      tag_prefix: tagPrefix,
       convertapi_secret: convertapiSecret,
       manual_folder_selected: 1,
       logo_base64: logoBase64,
@@ -553,6 +557,54 @@ export default function Settings({ settings, onSettingsSaved, onOpenFolderPicker
                 </label>
               </div>
 
+              {/* KOTAK SETTING TAG DOKUMEN */}
+              <div className="flex flex-col p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-white rounded-lg shadow-sm">
+                      <FileDigit size={18} className="text-emerald-600" />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-bold text-slate-800">Verifikasi Tag Keaslian</h4>
+                      <p className="text-xs font-medium text-slate-500 mt-1">Sertakan nomor tag 12 karakter pada surat sistem (gunakan variabel {'{{#tag}}'}).</p>
+                    </div>
+                  </div>
+                  <label className="flex items-center cursor-pointer shrink-0 ml-4">
+                    <div className="relative">
+                      <input
+                        type="checkbox"
+                        checked={enableTag}
+                        onChange={(e) => setEnableTag(e.target.checked)}
+                        className="sr-only"
+                      />
+                      <div className={`block w-12 h-7 rounded-full transition-colors duration-300 ${enableTag ? 'bg-emerald-500' : 'bg-slate-200'}`}></div>
+                      <div className={`absolute left-1 top-1 bg-white w-5 h-5 rounded-full transition-transform duration-300 shadow-sm ${enableTag ? 'translate-x-5' : ''}`}></div>
+                    </div>
+                  </label>
+                </div>
+                
+                {enableTag && (
+                  <div className="pt-3 border-t border-emerald-100/50 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="flex-1">
+                      <label className="text-xs font-bold text-slate-600 mb-1 block uppercase tracking-wider">Prefix Singkatan</label>
+                      <input 
+                        type="text" 
+                        value={tagPrefix} 
+                        onChange={(e) => setTagPrefix(e.target.value.toUpperCase())}
+                        placeholder="Contoh: MTS" 
+                        className="w-full bg-white border border-emerald-200 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 outline-none focus:border-emerald-500 transition-colors uppercase"
+                        maxLength="5"
+                      />
+                    </div>
+                    <div className="flex-[2]">
+                       <label className="text-xs font-bold text-slate-600 mb-1 block uppercase tracking-wider">Pratinjau Hasil di Surat</label>
+                       <div className="w-full bg-slate-100 border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono font-bold text-slate-500 truncate">
+                          {tagPrefix ? `${tagPrefix}-A1B2C3D4` : 'A1B2C3D4'}
+                       </div>
+                    </div>
+                  </div>
+                )}
+              </div>
 
             </div>
           </div>

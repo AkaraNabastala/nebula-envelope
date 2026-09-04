@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import Titlebar from '../components/Titlebar';
 import { verifikasiUserLocal, resetPasswordAdmin, getSettings } from '../services/db';
-import LogoNebula from '../assets/logonebula.png';
+import LogoNebula from '../assets/icon.png';
 
 export default function Login({ onLoginSuccess, settings }) {
   let navigate;

@@ -6,6 +6,23 @@ import { Save, Calendar, Printer, FileText, CheckCircle2, ChevronRight, Zap, Eye
 import QRCode from 'qrcode';
 import { toast } from 'sonner';
 
+// Menghasilkan tag 8 karakter acak alfanumerik
+function generateUniqueTag(prefix) {
+  // Format: YYMMDD + 6 digit angka acak (Total 12 digit angka)
+  const date = new Date();
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  
+  let randomPart = '';
+  for (let i = 0; i < 6; i++) {
+    randomPart += Math.floor(Math.random() * 10).toString();
+  }
+  
+  const tagNumber = `${yy}${mm}${dd}${randomPart}`;
+  return prefix ? `${prefix}-${tagNumber}` : tagNumber;
+}
+
 export default function CreateLetter({ templates, masterData, settings, onLetterCreated, outgoingCount, onOpenFolderPicker, onViewDocument, isSidebarOpen }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [selectedTemplate, setSelectedTemplate] = useState(null);
@@ -114,15 +131,19 @@ export default function CreateLetter({ templates, masterData, settings, onLetter
       const newLocked = [];
       setFormData(prev => {
         const updated = { ...prev };
-        if (entity.nama && variables.includes('nama')) {
-          updated['nama'] = entity.nama;
-          newLocked.push('nama');
+        if (entity.nama) {
+          const matchedNama = variables.find(v => v.toLowerCase() === 'nama');
+          if (matchedNama) {
+            updated[matchedNama] = entity.nama;
+            newLocked.push(matchedNama);
+          }
         }
         if (entity.attributes) {
           Object.keys(entity.attributes).forEach(attrKey => {
-            if (variables.includes(attrKey)) {
-              updated[attrKey] = entity.attributes[attrKey];
-              newLocked.push(attrKey);
+            const matchedAttr = variables.find(v => v.toLowerCase() === attrKey.toLowerCase());
+            if (matchedAttr) {
+              updated[matchedAttr] = entity.attributes[attrKey];
+              newLocked.push(matchedAttr);
             }
           });
         }
@@ -152,6 +173,17 @@ export default function CreateLetter({ templates, masterData, settings, onLetter
     setIsSaving(true);
     const folderTarget = settings?.folder_surat_keluar || 'D:/data/surat/keluar';
     const finalFormData = { ...formData, nomor_surat: generatedNumber };
+
+    // --- LOGIKA GENERATE TAG ---
+    let generatedTag = null;
+    if (settings?.enable_tag === 1) {
+      generatedTag = generateUniqueTag(settings?.tag_prefix || 'DOC');
+      finalFormData['tag'] = generatedTag;
+      finalFormData['tag_dokumen'] = generatedTag;
+      // Tetap pasang untuk fallback jaga-jaga
+      finalFormData['#tag'] = generatedTag;
+      finalFormData['/tag'] = generatedTag;
+    }
 
     if (settings?.enable_qrcode === 1) {
       try {
@@ -198,14 +230,17 @@ export default function CreateLetter({ templates, masterData, settings, onLetter
     const letterRecord = {
       nomor_surat: generatedNumber,
       nama_template: selectedTemplate?.nama_template || 'Surat Kustom',
-      perihal: finalFormData.perihal || '',
+      perihal: perihalText,
       nama_file: generatedFileName,
       formData: finalFormData,
       konten: finalKonten,
+      file_path: filePath,
+      is_docx: !!(selectedTemplate?.is_docx && selectedTemplate.file_base64),
+      folder_tersimpan: folderTarget,
       file_base64: fileBase64,
-      is_docx: !!selectedTemplate?.is_docx,
-      folder_tersimpan: folderTarget
+      document_tag: generatedTag // <--- TAMBAHKAN BARIS INI
     };
+
 
     await saveOutgoingLetter(letterRecord);
     setIsSaved(true);
@@ -215,80 +250,80 @@ export default function CreateLetter({ templates, masterData, settings, onLetter
 
     // JEDA WAKTU PENTING UNTUK AUTO-PRINT
     setTimeout(async () => {
-       let actionMessage = 'Surat berhasil disimpan.';
-       
-       if (actionPrint) {
-         if (!selectedTemplate?.is_docx) {
-           window.print();
-           actionMessage = 'Surat berhasil disimpan & dicetak.';
-         } else {
-           if (window.api && window.api.cetakSuratFisik) {
-             window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'print', title: 'Mencetak Dokumen...', subtitle: 'Mengirim dokumen ke mesin printer.' } }));
-             const res = await window.api.cetakSuratFisik(filePath);
-             window.dispatchEvent(new CustomEvent('hide-processing'));
-             if (res.success) {
-               actionMessage = 'Surat DOCX berhasil dikirim ke Printer.';
-             } else {
-               window.dispatchEvent(new CustomEvent('show-toast', { detail: { title: 'Gagal Cetak', message: res.error, type: 'error' } }));
-             }
-           }
-         }
-       }
-       
-       if (actionConvert) {
-         if (selectedTemplate?.is_docx) {
-           const secretKey = "LkAHyYTrm2Ef800RLFyoYYlqlmnRF6Uj";
-           toast.loading('Konversi PDF...', { description: 'Menghubungkan ke ConvertAPI...', id: 'pdf-convert' });
-           try {
-             const localFileRes = await fetch(`${API_BASE_URL}/download?path=${encodeURIComponent(filePath)}`);
-             if (!localFileRes.ok) throw new Error("Gagal membaca dokumen asli.");
-             const fileBlob = await localFileRes.blob();
+      let actionMessage = 'Surat berhasil disimpan.';
 
-             const formData = new FormData();
-             formData.append('File', fileBlob, generatedFileName + '.docx');
-             formData.append('StoreFile', 'true');
+      if (actionPrint) {
+        if (!selectedTemplate?.is_docx) {
+          window.print();
+          actionMessage = 'Surat berhasil disimpan & dicetak.';
+        } else {
+          if (window.api && window.api.cetakSuratFisik) {
+            window.dispatchEvent(new CustomEvent('show-processing', { detail: { type: 'print', title: 'Mencetak Dokumen...', subtitle: 'Mengirim dokumen ke mesin printer.' } }));
+            const res = await window.api.cetakSuratFisik(filePath);
+            window.dispatchEvent(new CustomEvent('hide-processing'));
+            if (res.success) {
+              actionMessage = 'Surat DOCX berhasil dikirim ke Printer.';
+            } else {
+              window.dispatchEvent(new CustomEvent('show-toast', { detail: { title: 'Gagal Cetak', message: res.error, type: 'error' } }));
+            }
+          }
+        }
+      }
 
-             const convertRes = await fetch('https://v2.convertapi.com/convert/docx/to/pdf', {
-               method: 'POST',
-               headers: { 'Authorization': `Bearer ${secretKey}` },
-               body: formData
-             });
+      if (actionConvert) {
+        if (selectedTemplate?.is_docx) {
+          const secretKey = "LkAHyYTrm2Ef800RLFyoYYlqlmnRF6Uj";
+          toast.loading('Konversi PDF...', { description: 'Menghubungkan ke ConvertAPI...', id: 'pdf-convert' });
+          try {
+            const localFileRes = await fetch(`${API_BASE_URL}/download?path=${encodeURIComponent(filePath)}`);
+            if (!localFileRes.ok) throw new Error("Gagal membaca dokumen asli.");
+            const fileBlob = await localFileRes.blob();
 
-             if (!convertRes.ok) throw new Error('Konversi ditolak oleh server ConvertAPI.');
-             const result = await convertRes.json();
-             if (result.Files && result.Files.length > 0) {
-               const pdfUrl = result.Files[0].Url;
-               const pdfRes = await fetch(pdfUrl);
-               const pdfBlob = await pdfRes.blob();
-               const reader = new FileReader();
-               reader.readAsDataURL(pdfBlob);
-               reader.onloadend = async () => {
-                 const base64data = reader.result.split(',')[1];
-                 const finalPdfName = `${generatedFileName}.pdf`;
-                 if (window.api && window.api.saveFile) {
-                   await window.api.saveFile({
-                     folderPath: folderTarget,
-                     fileName: finalPdfName,
-                     fileData: base64data,
-                     isBase64: true
-                   });
-                   toast.dismiss('pdf-convert');
-                 }
-               };
-             } else {
-               throw new Error('Hasil konversi kosong.');
-             }
-           } catch (error) {
-             let errorMsg = error.message;
-             if (errorMsg && errorMsg.includes('Failed to fetch')) errorMsg = "Gagal terhubung ke server konversi. Harap periksa koneksi internet Anda.";
-             toast.error('Gagal Konversi', { id: 'pdf-convert', description: errorMsg });
-           }
-         } else {
-           toast.error('Format Tidak Didukung', { description: 'Konversi PDF saat ini hanya mendukung format DOCX.' });
-         }
-       }
-       
-       triggerToast('Sukses!', actionMessage);
+            const formData = new FormData();
+            formData.append('File', fileBlob, generatedFileName + '.docx');
+            formData.append('StoreFile', 'true');
+
+            const convertRes = await fetch('https://v2.convertapi.com/convert/docx/to/pdf', {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${secretKey}` },
+              body: formData
+            });
+
+            if (!convertRes.ok) throw new Error('Konversi ditolak oleh server ConvertAPI.');
+            const result = await convertRes.json();
+            if (result.Files && result.Files.length > 0) {
+              const pdfUrl = result.Files[0].Url;
+              const pdfRes = await fetch(pdfUrl);
+              const pdfBlob = await pdfRes.blob();
+              const reader = new FileReader();
+              reader.readAsDataURL(pdfBlob);
+              reader.onloadend = async () => {
+                const base64data = reader.result.split(',')[1];
+                const finalPdfName = `${generatedFileName}.pdf`;
+                if (window.api && window.api.saveFile) {
+                  await window.api.saveFile({
+                    folderPath: folderTarget,
+                    fileName: finalPdfName,
+                    fileData: base64data,
+                    isBase64: true
+                  });
+                  toast.dismiss('pdf-convert');
+                }
+              };
+            } else {
+              throw new Error('Hasil konversi kosong.');
+            }
+          } catch (error) {
+            let errorMsg = error.message;
+            if (errorMsg && errorMsg.includes('Failed to fetch')) errorMsg = "Gagal terhubung ke server konversi. Harap periksa koneksi internet Anda.";
+            toast.error('Gagal Konversi', { id: 'pdf-convert', description: errorMsg });
+          }
+        } else {
+          toast.error('Format Tidak Didukung', { description: 'Konversi PDF saat ini hanya mendukung format DOCX.' });
+        }
+      }
+
+      triggerToast('Sukses!', actionMessage);
     }, 500);
 
     if (onLetterCreated) onLetterCreated();
@@ -468,13 +503,13 @@ export default function CreateLetter({ templates, masterData, settings, onLetter
                 </div>
 
                 <div className="pl-1 lg:pl-11 space-y-6 flex-1">
-                  {variables.filter(v => v !== 'nomor_surat' && v !== 'qrcode' && v !== '%qrcode' && v.toLowerCase() !== 'perihal').length === 0 ? (
+                  {variables.filter(v => !['nomor_surat', 'qrcode', '%qrcode', 'tag', '#tag', '/tag', 'tag_dokumen'].includes(v) && v.toLowerCase() !== 'perihal').length === 0 ? (
                     <div className="text-center p-8 border-2 border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
                       <p className="text-slate-400 font-bold text-xs uppercase tracking-widest">Tidak Ada Variabel Khusus</p>
                     </div>
                   ) : (
                     <div className="space-y-5">
-                      {variables.filter(v => v !== 'nomor_surat' && v !== 'qrcode' && v !== '%qrcode' && v.toLowerCase() !== 'perihal').map(varName => {
+                      {variables.filter(v => !['nomor_surat', 'qrcode', '%qrcode', 'tag', '#tag', '/tag', 'tag_dokumen'].includes(v) && v.toLowerCase() !== 'perihal').map(varName => {
                         const isDate = varName.toLowerCase().includes('tanggal');
                         const isLocked = lockedFields.includes(varName);
 

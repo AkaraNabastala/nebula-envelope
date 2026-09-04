@@ -1,7 +1,202 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
-const path = require('node:path');
 const fs = require('fs');
-const os = require('os');
+const path = require('path');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const Database = require('better-sqlite3');
+const express = require('express');
+const cors = require('cors');
+
+// --- AUTO GENERATE Verify.jsx KARENA PERMISSION WSL ---
+const verifyJsxPath = path.join(__dirname, '../../src/pages/Verify.jsx');
+if (false) {
+  const verifyJsxContent = `import React, { useState, useEffect } from 'react';
+import { ShieldCheck, Search, FileUp, AlertTriangle, CheckCircle2, Shield, Loader2, ArrowLeft } from 'lucide-react';
+import { API_BASE_URL } from '../services/db';
+import { toast } from 'sonner';
+
+export default function Verify({ settings }) {
+  const [tagInput, setTagInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    if (token) {
+      handleVerifyQRToken(token);
+    }
+  }, []);
+
+  const handleVerifyQRToken = async (token) => {
+    setLoading(true); setResult(null); setError(null);
+    try {
+      const res = await fetch(\`\${API_BASE_URL}/verify/qr?token=\${encodeURIComponent(token)}\`);
+      const data = await res.json();
+      if (data.success) { setResult(data); } else { setError(data.message || 'Gagal memverifikasi dokumen.'); }
+    } catch (err) {
+      setError('Koneksi ke server gagal.');
+    } finally { setLoading(false); }
+  };
+
+  const handleManualVerify = async (e) => {
+    e.preventDefault();
+    if (!tagInput.trim()) return toast.error('Masukkan nomor tag terlebih dahulu.');
+    setLoading(true); setResult(null); setError(null);
+    try {
+      const res = await fetch(\`\${API_BASE_URL}/verify/tag/\${encodeURIComponent(tagInput.trim())}\`);
+      const data = await res.json();
+      if (data.success) { setResult(data); } else { setError(data.message || 'Sistem tidak menemukan dokumen ini di pangkalan data.'); }
+    } catch (err) {
+      setError('Koneksi ke server gagal.');
+    } finally { setLoading(false); }
+  };
+
+
+  const logoUrl = settings?.logo_base64 || '/logonebula.png';
+  const instansiName = settings?.nama_instansi || 'Sistem Surat';
+
+  const renderInternalResult = () => {
+    if (!result?.data) return null;
+    const { nomor_surat, perihal, created_at } = result.data;
+    const dateStr = new Date(created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute:'2-digit' });
+
+    return (
+      <div className="mt-8 bg-emerald-50 border-t-4 border-emerald-600 p-6 md:p-8 rounded-2xl shadow-sm relative overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="absolute top-0 right-0 p-4 opacity-5">
+          <ShieldCheck className="w-40 h-40 text-emerald-900" />
+        </div>
+        <div className="relative z-10">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="bg-emerald-100 p-2 rounded-full"><CheckCircle2 className="w-6 h-6 text-emerald-700" /></div>
+            <h3 className="text-xl md:text-2xl font-bold text-emerald-800 tracking-tight">DOKUMEN VALID</h3>
+          </div>
+          <p className="text-emerald-700 text-sm mb-6 font-medium">Dokumen ini terdaftar secara resmi di sistem pangkalan data dan dapat dipertanggungjawabkan keasliannya.</p>
+          <div className="bg-white/90 backdrop-blur-sm rounded-xl p-5 md:p-6 border border-emerald-100 shadow-sm space-y-5">
+            <div><p className="text-xs uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Nomor Registrasi Surat</p><p className="font-black text-slate-900 text-lg md:text-xl">{nomor_surat}</p></div>
+            <div className="h-px w-full bg-emerald-100"></div>
+            <div><p className="text-xs uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Perihal / Hal</p><p className="font-semibold text-slate-800 text-base">{perihal || '-'}</p></div>
+            <div className="h-px w-full bg-emerald-100"></div>
+            <div><p className="text-xs uppercase tracking-widest font-bold text-emerald-600/70 mb-1">Waktu Penerbitan</p><p className="font-semibold text-slate-800">{dateStr} WIB</p></div>
+          </div>
+          <div className="mt-6 flex flex-col gap-1.5 bg-emerald-800/5 p-4 rounded-xl border border-emerald-800/10">
+            <span className="text-[10px] font-bold text-emerald-800 uppercase tracking-widest flex items-center gap-1.5"><Shield className="w-3.5 h-3.5"/> SHA-256 Digital Fingerprint</span>
+            <span className="text-xs md:text-sm font-mono font-medium text-emerald-700 break-all">{result.signatureHash || 'Otentikasi Internal Sistem'}</span>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col w-full h-full absolute inset-0 z-50 overflow-y-auto">
+      {/* Background Decor */}
+      <div className="absolute top-0 left-0 w-full h-96 bg-blue-900 rounded-b-[3rem] shadow-xl z-0 overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] opacity-10 mix-blend-overlay"></div>
+        <div className="absolute -top-24 -right-24 w-96 h-96 bg-blue-600 rounded-full mix-blend-multiply filter blur-3xl opacity-50"></div>
+        <div className="absolute -bottom-24 -left-24 w-72 h-72 bg-indigo-600 rounded-full mix-blend-multiply filter blur-3xl opacity-50"></div>
+      </div>
+
+      <header className="relative z-10 w-full max-w-5xl mx-auto pt-10 pb-6 px-6 flex flex-col items-center justify-center text-center">
+        <div className="bg-white p-3 rounded-2xl shadow-lg mb-6 ring-4 ring-white/20">
+          <img src={logoUrl} alt="Logo" className="h-20 w-20 object-contain" />
+        </div>
+        <h1 className="text-3xl md:text-4xl font-black uppercase tracking-tight text-white drop-shadow-md mb-2">Nebula Document Verification</h1>
+        <p className="text-blue-100 font-medium text-lg bg-blue-950/30 px-6 py-2 rounded-full backdrop-blur-sm border border-blue-400/20">{instansiName}</p>
+      </header>
+      
+      <main className="relative z-10 flex-grow w-full max-w-3xl mx-auto px-4 pb-12">
+        <div className="bg-white/95 backdrop-blur-md rounded-3xl shadow-2xl border border-white/50 p-6 md:p-10 mb-8">
+          
+          {!result && !loading && !error && (
+            <div className="text-center mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-inner ring-1 ring-blue-100">
+                <Search className="w-8 h-8" />
+              </div>
+              <h2 className="text-2xl font-bold text-slate-800 mb-3 tracking-tight">Cek Keaslian Surat</h2>
+              <p className="text-slate-500 text-sm font-medium px-4 md:px-12 leading-relaxed">
+                Silakan masukkan <span className="text-blue-600 font-bold">Nomor Registrasi</span> atau <span className="text-blue-600 font-bold">Tag ID</span> yang tertera pada dokumen Anda untuk memverifikasi keasliannya di pangkalan data kami.
+              </p>
+            </div>
+          )}
+
+          {loading ? (
+            <div className="py-20 flex flex-col items-center justify-center">
+              <div className="relative w-16 h-16 mb-6">
+                <div className="absolute inset-0 border-4 border-blue-100 rounded-full"></div>
+                <div className="absolute inset-0 border-4 border-blue-600 rounded-full border-t-transparent animate-spin"></div>
+                <ShieldCheck className="absolute inset-0 m-auto w-6 h-6 text-blue-600" />
+              </div>
+              <p className="text-slate-600 font-bold text-lg animate-pulse tracking-wide">Memverifikasi dokumen...</p>
+            </div>
+          ) : (
+            <>
+              {!result && !error && (
+                <form onSubmit={handleManualVerify} className="flex flex-col gap-4 animate-in fade-in slide-in-from-bottom-4 duration-500 delay-100">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-5 flex items-center pointer-events-none">
+                      <Search className="w-5 h-5 text-slate-400" />
+                    </div>
+                    <input 
+                      type="text" 
+                      value={tagInput} 
+                      onChange={(e) => setTagInput(e.target.value)} 
+                      placeholder="Contoh: DOC-A1B2C3D4" 
+                      className="w-full pl-14 pr-6 py-5 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-600/10 focus:border-blue-500 focus:bg-white font-mono font-bold text-lg md:text-xl text-center uppercase tracking-widest transition-all placeholder-slate-300 shadow-inner" 
+                    />
+                  </div>
+                  <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg py-5 px-8 rounded-2xl transition-all shadow-lg shadow-blue-600/30 hover:shadow-blue-600/40 hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-3">
+                    <ShieldCheck className="w-6 h-6" /> VERIFIKASI SEKARANG
+                  </button>
+                </form>
+              )}
+
+              {error && (
+                <div className="bg-rose-50 border-t-4 border-rose-600 p-6 md:p-8 rounded-2xl shadow-sm animate-in zoom-in-95 duration-300">
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className="bg-rose-100 p-3 rounded-full text-rose-600"><AlertTriangle className="w-8 h-8" /></div>
+                    <h3 className="text-xl md:text-2xl font-bold text-rose-800 tracking-tight">DOKUMEN TIDAK DITEMUKAN</h3>
+                  </div>
+                  <p className="text-rose-700 font-medium mb-8 bg-white/50 p-4 rounded-xl border border-rose-100/50">{error}</p>
+                  <button onClick={() => { setError(null); setTagInput(''); }} className="w-full flex items-center justify-center gap-2 text-rose-700 bg-rose-100 hover:bg-rose-200 px-6 py-4 rounded-xl font-bold transition-colors shadow-sm">
+                    <ArrowLeft className="w-5 h-5" /> Coba Pencarian Lain
+                  </button>
+                </div>
+              )}
+
+              {result && (
+                <div>
+                  {renderInternalResult()}
+                  <div className="mt-8 text-center">
+                    <button onClick={() => { setResult(null); setTagInput(''); }} className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-6 py-3 rounded-full font-bold text-sm transition-colors inline-flex items-center justify-center gap-2 shadow-sm">
+                      <Search className="w-4 h-4" /> Verifikasi Dokumen Lainnya
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="bg-white/60 backdrop-blur border border-white p-5 rounded-2xl shadow-sm flex items-start gap-4">
+          <div className="bg-blue-100 p-2 rounded-lg text-blue-600 shrink-0"><Info className="w-5 h-5" /></div>
+          <p className="text-sm text-slate-600 font-medium leading-relaxed">
+            <strong>Peringatan Keamanan:</strong> Portal ini adalah sarana verifikasi resmi. Pastikan data yang tampil pada layar sesuai dengan fisik dokumen yang Anda miliki. Pemalsuan dokumen adalah tindakan kriminal yang dapat dikenakan sanksi pidana.
+          </p>
+        </div>
+      </main>
+
+      <footer className="relative z-10 text-slate-500 py-8 text-center text-xs mt-auto shrink-0 border-t border-slate-200/60 bg-slate-50/50">
+        <p className="mb-3 font-medium">&copy; {new Date().getFullYear()} Hak Cipta Dilindungi Undang-Undang.</p>
+        <div className="flex items-center justify-center gap-6">
+          <span className="flex items-center gap-1.5 font-bold tracking-wider uppercase text-[10px]"><Shield className="w-3.5 h-3.5 text-blue-500"/> Secured Platform</span>
+          <span className="flex items-center gap-1.5 font-bold tracking-wider uppercase text-[10px]"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-500"/> Digital Fingerprint</span>
+        </div>
+      </footer>
+    </div>
+  );
+}`;
+  fs.writeFileSync(verifyJsxPath, verifyJsxContent);
+}
 const { exec } = require('child_process');
 
 process.on('uncaughtException', (err) => {
@@ -9,13 +204,10 @@ process.on('uncaughtException', (err) => {
   console.error("FATAL ERROR:", err);
 });
 
-const Database = require('better-sqlite3');
-const express = require('express');
-const cors = require('cors');
 
 // --- SUPPRESS HARmless GTK/GLIB WARNINGS ---
 const originalStderrWrite = process.stderr.write;
-process.stderr.write = function(chunk, encoding, callback) {
+process.stderr.write = function (chunk, encoding, callback) {
   if (typeof chunk === 'string' && chunk.includes('GLib-GObject')) {
     // Ignore harmless GTK warnings
     return true;
@@ -50,7 +242,9 @@ function initDatabase() {
       server_enabled INTEGER DEFAULT 0,
       server_port INTEGER DEFAULT 8080,
       enable_qrcode INTEGER DEFAULT 0,
-      convertapi_secret TEXT
+      convertapi_secret TEXT,
+      komdigi_api_url TEXT,
+      komdigi_api_key TEXT
     );
 
     CREATE TABLE IF NOT EXISTS templates (
@@ -114,18 +308,22 @@ function initDatabase() {
   `);
 
   // Migrations for existing databases
-  try { db.exec("ALTER TABLE settings ADD COLUMN enable_qrcode INTEGER DEFAULT 0;"); } catch(e) {}
-  try { db.exec("ALTER TABLE settings ADD COLUMN convertapi_secret TEXT;"); } catch(e) {}
-  try { db.exec("ALTER TABLE settings ADD COLUMN logo_base64 TEXT;"); } catch(e) {}
-  try { db.exec("ALTER TABLE settings ADD COLUMN login_bg_base64 TEXT;"); } catch(e) {}
-  try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'operator';"); } catch(e) {}
-  try { db.exec("ALTER TABLE users ADD COLUMN nama_lengkap TEXT DEFAULT 'Pengguna';"); } catch(e) {}
-  try { db.exec("ALTER TABLE outgoing_letters ADD COLUMN status TEXT DEFAULT 'Draf';"); } catch(e) {}
+  try { db.exec("ALTER TABLE settings ADD COLUMN enable_qrcode INTEGER DEFAULT 0;"); } catch (e) { }
+  try { db.exec("ALTER TABLE settings ADD COLUMN convertapi_secret TEXT;"); } catch (e) { }
+  try { db.exec("ALTER TABLE settings ADD COLUMN logo_base64 TEXT;"); } catch (e) { }
+  try { db.exec("ALTER TABLE settings ADD COLUMN login_bg_base64 TEXT;"); } catch (e) { }
+  try { db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'operator';"); } catch (e) { }
+  try { db.exec("ALTER TABLE users ADD COLUMN nama_lengkap TEXT DEFAULT 'Pengguna';"); } catch (e) { }
+  try { db.exec("ALTER TABLE outgoing_letters ADD COLUMN status TEXT DEFAULT 'Draf';"); } catch (e) { }
+  try { db.exec("ALTER TABLE settings ADD COLUMN enable_tag INTEGER DEFAULT 0;"); } catch (e) { }
+  try { db.exec("ALTER TABLE settings ADD COLUMN tag_prefix TEXT DEFAULT 'DOC';"); } catch (e) { }
+  try { db.exec("ALTER TABLE outgoing_letters ADD COLUMN document_tag TEXT;"); } catch (e) { }
+
 
   // Update existing admin to be admin role if just migrated
-  try { db.prepare("UPDATE users SET role = 'admin' WHERE username = 'admin' AND role = 'operator'").run(); } catch(e) {}
-  try { db.prepare("UPDATE users SET username = 'administrator', password = 'admin123' WHERE username = 'admin'").run(); } catch(e) {}
-  try { db.prepare("UPDATE settings SET master_pin = '123987' WHERE master_pin = '123456'").run(); } catch(e) {}
+  try { db.prepare("UPDATE users SET role = 'admin' WHERE username = 'admin' AND role = 'operator'").run(); } catch (e) { }
+  try { db.prepare("UPDATE users SET username = 'administrator', password = 'admin123' WHERE username = 'admin'").run(); } catch (e) { }
+  try { db.prepare("UPDATE settings SET master_pin = '123987' WHERE master_pin = '123456'").run(); } catch (e) { }
 
   // Seed default settings
   const settingsCount = db.prepare('SELECT count(*) as count FROM settings').get();
@@ -200,44 +398,46 @@ function startExpressServer(port) {
   }
 
   // --- API ROUTING ---
-  
+
   // Settings API
   expressApp.get('/api/settings', (req, res) => {
     const data = db.prepare("SELECT * FROM settings LIMIT 1").get();
     res.json(data || {});
   });
   expressApp.post('/api/settings', (req, res) => {
-    const { nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected, master_pin, counter_surat_keluar, server_enabled, server_port, enable_qrcode, convertapi_secret, logo_base64, login_bg_base64 } = req.body;
-    
-    // First ensure there is at least one row
+    const { nama_instansi, folder_surat_keluar, folder_surat_masuk, format_nomor_default, manual_folder_selected, master_pin, counter_surat_keluar, server_enabled, server_port, enable_qrcode, convertapi_secret, logo_base64, login_bg_base64, enable_tag, tag_prefix } = req.body;
+
     const count = db.prepare('SELECT count(*) as count FROM settings').get();
     if (count.count === 0) {
       db.prepare(`INSERT INTO settings (id, counter_surat_keluar) VALUES ('config', 0)`).run();
     }
-    
+
     db.prepare(`
       UPDATE settings SET 
         nama_instansi = ?, folder_surat_keluar = ?, folder_surat_masuk = ?, format_nomor_default = ?, 
         manual_folder_selected = ?, master_pin = ?, counter_surat_keluar = ?, server_enabled = ?, server_port = ?, enable_qrcode = ?, convertapi_secret = ?,
-        logo_base64 = ?, login_bg_base64 = ?
+        logo_base64 = ?, login_bg_base64 = ?, enable_tag = ?, tag_prefix = ?
     `).run(
-      nama_instansi || '', 
-      folder_surat_keluar || '', 
-      folder_surat_masuk || '', 
-      format_nomor_default || '', 
-      manual_folder_selected ? 1 : 0, 
-      master_pin || '123987', 
-      counter_surat_keluar || 0, 
-      server_enabled ? 1 : 0, 
-      server_port || 8080, 
-      enable_qrcode ? 1 : 0, 
-      convertapi_secret || '', 
-      logo_base64 || '', 
-      login_bg_base64 || ''
+      nama_instansi || '',
+      folder_surat_keluar || '',
+      folder_surat_masuk || '',
+      format_nomor_default || '',
+      manual_folder_selected ? 1 : 0,
+      master_pin || '123987',
+      counter_surat_keluar || 0,
+      server_enabled ? 1 : 0,
+      server_port || 8080,
+      enable_qrcode ? 1 : 0,
+      convertapi_secret || '',
+      logo_base64 || '',
+      login_bg_base64 || '',
+      enable_tag ? 1 : 0,
+      tag_prefix || 'DOC'
     );
-    
+
     res.json({ success: true });
   });
+
 
   // Auth API
   expressApp.post('/api/auth/login', (req, res) => {
@@ -255,22 +455,22 @@ function startExpressServer(port) {
 
   expressApp.post('/api/auth/reset', (req, res) => {
     const { username, master_pin, new_password } = req.body;
-    
+
     // Verifikasi master pin
     const config = db.prepare("SELECT master_pin FROM settings WHERE id = 'config'").get();
     const validPin = config && config.master_pin ? config.master_pin : '123987';
-    
+
     if (master_pin !== validPin) {
       addAuditLog(`Percobaan reset sandi gagal (PIN salah) untuk: ${username}`);
       return res.status(401).json({ error: 'Master PIN salah' });
     }
-    
+
     // Pastikan user ada
     const user = db.prepare('SELECT username FROM users WHERE username = ?').get(username);
     if (!user) {
       return res.status(404).json({ error: 'Pengguna tidak ditemukan' });
     }
-    
+
     // Update password
     db.prepare('UPDATE users SET password = ? WHERE username = ?').run(new_password, username);
     addAuditLog(`Sandi berhasil direset menggunakan Master PIN untuk: ${username}`);
@@ -287,17 +487,17 @@ function startExpressServer(port) {
     // Check if exists
     const existing = db.prepare('SELECT username FROM users WHERE username = ?').get(username);
     if (existing) {
-       // Update
-       if (password && password.trim() !== '') {
-          db.prepare('UPDATE users SET password = ?, role = ?, nama_lengkap = ? WHERE username = ?').run(password, role, nama_lengkap || 'Pengguna', username);
-       } else {
-          db.prepare('UPDATE users SET role = ?, nama_lengkap = ? WHERE username = ?').run(role, nama_lengkap || 'Pengguna', username);
-       }
-       addAuditLog(`Mengubah pengguna: ${username}`);
+      // Update
+      if (password && password.trim() !== '') {
+        db.prepare('UPDATE users SET password = ?, role = ?, nama_lengkap = ? WHERE username = ?').run(password, role, nama_lengkap || 'Pengguna', username);
+      } else {
+        db.prepare('UPDATE users SET role = ?, nama_lengkap = ? WHERE username = ?').run(role, nama_lengkap || 'Pengguna', username);
+      }
+      addAuditLog(`Mengubah pengguna: ${username}`);
     } else {
-       // Insert
-       db.prepare('INSERT INTO users (username, password, role, nama_lengkap) VALUES (?, ?, ?, ?)').run(username, password, role, nama_lengkap || 'Pengguna');
-       addAuditLog(`Menambahkan pengguna baru: ${username} (${role})`);
+      // Insert
+      db.prepare('INSERT INTO users (username, password, role, nama_lengkap) VALUES (?, ?, ?, ?)').run(username, password, role, nama_lengkap || 'Pengguna');
+      addAuditLog(`Menambahkan pengguna baru: ${username} (${role})`);
     }
     res.json({ success: true });
   });
@@ -313,30 +513,30 @@ function startExpressServer(port) {
     const total_outgoing = db.prepare('SELECT count(*) as c FROM outgoing_letters').get().c;
     const total_incoming = db.prepare('SELECT count(*) as c FROM incoming_archives').get().c;
     const total_templates = db.prepare('SELECT count(*) as c FROM templates').get().c;
-    
+
     // Get monthly counts for the current year
     const year = new Date().getFullYear().toString();
     const outgoing_monthly = db.prepare("SELECT strftime('%m', created_at) as month, count(*) as count FROM outgoing_letters WHERE strftime('%Y', created_at) = ? GROUP BY month").all(year);
     const incoming_monthly = db.prepare("SELECT strftime('%m', created_at) as month, count(*) as count FROM incoming_archives WHERE strftime('%Y', created_at) = ? GROUP BY month").all(year);
-    
+
     const chartData = [];
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    for(let i=1; i<=12; i++) {
-       const mStr = i.toString().padStart(2, '0');
-       const outItem = outgoing_monthly.find(x => x.month === mStr);
-       const incItem = incoming_monthly.find(x => x.month === mStr);
-       chartData.push({
-          name: months[i-1],
-          outgoing: outItem ? outItem.count : 0,
-          incoming: incItem ? incItem.count : 0
-       });
+    for (let i = 1; i <= 12; i++) {
+      const mStr = i.toString().padStart(2, '0');
+      const outItem = outgoing_monthly.find(x => x.month === mStr);
+      const incItem = incoming_monthly.find(x => x.month === mStr);
+      chartData.push({
+        name: months[i - 1],
+        outgoing: outItem ? outItem.count : 0,
+        incoming: incItem ? incItem.count : 0
+      });
     }
 
     res.json({
-       total_outgoing,
-       total_incoming,
-       total_templates,
-       chartData
+      total_outgoing,
+      total_incoming,
+      total_templates,
+      chartData
     });
   });
 
@@ -462,9 +662,9 @@ function startExpressServer(port) {
       if (d.is_docx === 1 && d.file_path && fs.existsSync(d.file_path)) {
         base64 = fs.readFileSync(d.file_path, { encoding: 'base64' });
       }
-      return { 
-        ...d, 
-        variables: JSON.parse(d.variables || '[]'), 
+      return {
+        ...d,
+        variables: JSON.parse(d.variables || '[]'),
         is_docx: d.is_docx === 1,
         file_base64: base64
       };
@@ -473,7 +673,7 @@ function startExpressServer(port) {
   });
   expressApp.post('/api/templates', (req, res) => {
     const { id, nama_template, konten, variables, is_docx, file_name, file_base64, ukuran_kertas, kop_surat_base64 } = req.body;
-    
+
     let file_path = '';
     let kop_surat_path = '';
     const folderArsip = path.join(app.getPath('userData'), 'Berkas_Arsip');
@@ -525,13 +725,23 @@ function startExpressServer(port) {
 
   // Outgoing Letters API
   expressApp.get('/api/outgoing', (req, res) => {
-    const data = db.prepare('SELECT * FROM outgoing_letters').all();
-    const parsed = data.map(d => ({ ...d, formData: JSON.parse(d.formData || '{}'), is_docx: d.is_docx === 1 }));
-    res.json(parsed);
+    try {
+      const data = db.prepare('SELECT * FROM outgoing_letters ORDER BY created_at DESC').all();
+      const parsed = data.map(d => ({
+        ...d,
+        formData: JSON.parse(d.formData || '{}'),
+        is_docx: d.is_docx === 1
+      }));
+      res.json(parsed);
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Gagal mengambil surat keluar' });
+    }
   });
+
   expressApp.post('/api/outgoing', (req, res) => {
-    const { nomor_surat, nama_template, perihal, nama_file, formData, konten, file_path, is_docx, folder_tersimpan, file_base64 } = req.body;
-    
+    const { nomor_surat, nama_template, perihal, nama_file, formData, konten, file_path, is_docx, folder_tersimpan, file_base64, status, created_at, document_tag } = req.body;
+
     let finalFilePath = file_path || '';
 
     // Auto-fix for WSL/Linux environments running with Windows Paths
@@ -577,21 +787,21 @@ function startExpressServer(port) {
       }
     }
 
+    const finalCreatedAt = created_at || new Date().toISOString();
+    const finalStatus = status || 'Draf';
+
     const info = db.prepare(`
-      INSERT INTO outgoing_letters (nomor_surat, nama_template, perihal, nama_file, formData, konten, file_path, is_docx, folder_tersimpan, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(nomor_surat, nama_template, perihal, nama_file, JSON.stringify(formData || {}), konten, finalFilePath, is_docx ? 1 : 0, folder_tersimpan, new Date().toISOString());
-    
-    // Auto-increment counter (using COALESCE to handle NULL values)
+      INSERT INTO outgoing_letters (nomor_surat, nama_template, perihal, nama_file, formData, konten, file_path, is_docx, folder_tersimpan, created_at, status, document_tag)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(nomor_surat, nama_template, perihal, nama_file, JSON.stringify(formData || {}), konten, finalFilePath, is_docx ? 1 : 0, folder_tersimpan, finalCreatedAt, finalStatus, document_tag || null);
+
     try {
-      const updateRes = db.prepare("UPDATE settings SET counter_surat_keluar = COALESCE(counter_surat_keluar, 0) + 1").run();
-      console.log("Auto-increment settings update result:", updateRes);
-    } catch (dbErr) {
-      console.error("Gagal auto-increment counter:", dbErr);
-    }
+      db.prepare("UPDATE settings SET counter_surat_keluar = COALESCE(counter_surat_keluar, 0) + 1").run();
+    } catch (dbErr) { console.error(dbErr); }
     addAuditLog(`Membuat Surat Keluar No: ${nomor_surat}`);
     res.json({ id: info.lastInsertRowid });
   });
+
   // Update Status Outgoing Letter
   expressApp.post('/api/outgoing/:id/status', (req, res) => {
     const { status } = req.body;
@@ -599,6 +809,18 @@ function startExpressServer(port) {
     addAuditLog(`Memperbarui status surat keluar ID ${req.params.id} menjadi: ${status}`);
     res.json({ success: true });
   });
+
+  // Bulk Delete Outgoing Letters
+  expressApp.post('/api/outgoing/bulk/delete', (req, res) => {
+    const { ids } = req.body;
+    if (Array.isArray(ids) && ids.length > 0) {
+      const placeholders = ids.map(() => '?').join(',');
+      db.prepare(`DELETE FROM outgoing_letters WHERE id IN (${placeholders})`).run(...ids);
+      addAuditLog(`Menghapus massal ${ids.length} surat keluar.`);
+    }
+    res.json({ success: true });
+  });
+
 
   // Download File API (Untuk Arsip)
   expressApp.get('/api/download', (req, res) => {
@@ -629,8 +851,8 @@ function startExpressServer(port) {
       const response = await fetch(`https://v2.convertapi.com/convert/docx/to/pdf?Secret=${settings.convertapi_secret}&StoreFile=true`, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/octet-stream',
-            'Content-Disposition': `attachment; filename="${fileName}"`
+          'Content-Type': 'application/octet-stream',
+          'Content-Disposition': `attachment; filename="${fileName}"`
         },
         body: fileBuffer
       });
@@ -638,15 +860,15 @@ function startExpressServer(port) {
       const result = await response.json();
 
       if (response.ok && result.Files && result.Files.length > 0) {
-         const fileData = result.Files[0].FileData;
-         const pdfBuffer = Buffer.from(fileData, 'base64');
-         
-         // Set response headers to trigger file download
-         res.setHeader('Content-Type', 'application/pdf');
-         res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace('.docx', '.pdf')}"`);
-         res.send(pdfBuffer);
+        const fileData = result.Files[0].FileData;
+        const pdfBuffer = Buffer.from(fileData, 'base64');
+
+        // Set response headers to trigger file download
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${fileName.replace('.docx', '.pdf')}"`);
+        res.send(pdfBuffer);
       } else {
-         throw new Error(result.Message || 'Konversi gagal');
+        throw new Error(result.Message || 'Konversi gagal');
       }
 
     } catch (err) {
@@ -667,7 +889,7 @@ function startExpressServer(port) {
   expressApp.post('/api/incoming', (req, res) => {
     const { id, nomor_surat, perihal, tanggal_diterima, pengirim, file_name, folder_tersimpan, file_path } = req.body;
     const tgl = tanggal_diterima || new Date().toISOString().split('T')[0];
-    
+
     let info;
     if (id) {
       info = db.prepare(`
@@ -712,140 +934,80 @@ function startExpressServer(port) {
     const interfaces = os.networkInterfaces();
     let localIp = '127.0.0.1';
     for (const name of Object.keys(interfaces)) {
-        for (const iface of interfaces[name]) {
-            // Skip over internal and non-ipv4 addresses
-            if (iface.family === 'IPv4' && !iface.internal) {
-                localIp = iface.address;
-                break;
-            }
+      for (const iface of interfaces[name]) {
+        // Skip over internal and non-ipv4 addresses
+        if (iface.family === 'IPv4' && !iface.internal) {
+          localIp = iface.address;
+          break;
         }
-        if (localIp !== '127.0.0.1') break;
+      }
+      if (localIp !== '127.0.0.1') break;
     }
     res.json({ ip: localIp });
   });
 
-  expressApp.get('/verify', (req, res) => {
+  // --- HALAMAN VERIFIKASI DOKUMEN (WEB AKSES PUBLIK) ---
+  // --- API VERIFIKASI QR CODE (WEB AKSES PUBLIK) ---
+  expressApp.get('/api/verify/qr', (req, res) => {
     const token = req.query.token;
-    if (!token) {
-      return res.send("Token verifikasi tidak disertakan.");
-    }
+    if (!token) return res.status(400).json({ success: false, message: 'Token tidak valid' });
 
     let payload = null;
     try {
       payload = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
     } catch (e) {
-      return res.send("Format token verifikasi tidak valid.");
+      return res.status(400).json({ success: false, message: 'Format token QR tidak valid' });
     }
 
     const nomor = payload.nomor;
-    if (!nomor) return res.send("Nomor surat tidak ditemukan dalam token.");
+    if (!nomor) return res.status(400).json({ success: false, message: 'Data surat tidak ditemukan dalam token' });
 
     const surat = db.prepare("SELECT * FROM outgoing_letters WHERE nomor_surat = ?").get(nomor);
     const settings = db.prepare("SELECT nama_instansi, logo_base64 FROM settings LIMIT 1").get();
     const instansi = settings ? settings.nama_instansi : "Sistem Surat";
-    const logoUrl = settings && settings.logo_base64 ? settings.logo_base64 : 'https://upload.wikimedia.org/wikipedia/commons/thumb/b/b2/Garuda_Pancasila_Coat_of_Arms_of_Indonesia.svg/500px-Garuda_Pancasila_Coat_of_Arms_of_Indonesia.svg.png';
-
-    const crypto = require('crypto');
-    const signatureHash = crypto.createHash('sha256').update(nomor + instansi + (surat ? surat.created_at : 'INVALID')).digest('hex');
-
-    const isValid = !!surat;
-    const primaryColor = isValid ? '#047857' : '#be123c';
-    const secondaryColor = isValid ? '#10b981' : '#e11d48';
-    const bgColor = isValid ? '#d1fae5' : '#ffe4e6';
-    const badgeText = isValid ? 'DOKUMEN VALID & TEROTENTIKASI' : 'DOKUMEN TIDAK TERDAFTAR / PALSU';
-    const badgeIcon = isValid ? '✓' : '✗';
-    const title = isValid ? 'Sertifikat Elektronik' : 'Peringatan Keamanan';
-    const footerText = isValid 
-      ? 'Dokumen ini telah ditandatangani secara elektronik. Verifikasi sistem menyatakan bahwa dokumen ini asli dan tidak mengalami perubahan sejak diterbitkan.'
-      : 'PERINGATAN: Sistem tidak dapat menemukan rekam jejak dokumen ini. Dokumen ini mungkin telah dipalsukan atau dimodifikasi oleh pihak yang tidak bertanggung jawab.';
-
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="id">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Hasil Verifikasi Dokumen Elektronik</title>
-        <style>
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-          body { font-family: 'Inter', sans-serif; background: #e2e8f0; margin: 0; padding: 20px; color: #1e293b; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-          .cert-container { background: white; padding: 40px; border-radius: 12px; box-shadow: 0 20px 40px -10px rgb(0 0 0 / 0.15); width: 100%; max-width: 500px; position: relative; border-top: 10px solid ${primaryColor}; overflow: hidden; }
-          .cert-container::before { content: ''; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(circle, transparent 20%, #ffffff 20%, #ffffff 80%, transparent 80%, transparent), radial-gradient(circle, transparent 20%, #ffffff 20%, #ffffff 80%, transparent 80%, transparent) 25px 25px, linear-gradient(#f8fafc 2px, transparent 2px) 0 -1px, linear-gradient(90deg, #f8fafc 2px, #ffffff 2px) -1px 0; background-size: 50px 50px, 50px 50px, 25px 25px, 25px 25px; opacity: 0.4; z-index: 0; pointer-events: none; }
-          .content { position: relative; z-index: 10; text-align: center; }
-          .logo { width: 90px; height: 90px; object-fit: contain; margin-bottom: 20px; filter: drop-shadow(0 4px 6px rgba(0,0,0,0.1)); }
-          .badge { display: inline-flex; align-items: center; gap: 8px; background: ${bgColor}; color: ${primaryColor}; padding: 10px 20px; border-radius: 99px; font-weight: 800; font-size: 13px; margin-bottom: 25px; border: 1px solid ${secondaryColor}; box-shadow: 0 4px 10px ${bgColor}; }
-          .badge-icon { width: 22px; height: 22px; background: ${secondaryColor}; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; }
-          h1 { font-size: 24px; font-weight: 800; margin: 0 0 8px; color: #0f172a; text-transform: uppercase; letter-spacing: 1px; }
-          p.instansi { font-size: 16px; color: #475569; margin: 0 0 35px; font-weight: 600; }
-          .detail-box { text-align: left; background: #f8fafc; padding: 25px; border-radius: 12px; border: 1px solid #e2e8f0; font-size: 14px; margin-bottom: 25px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.02); }
-          .row { margin-bottom: 18px; display: flex; flex-direction: column; }
-          .row:last-child { margin-bottom: 0; }
-          .label { font-size: 11px; text-transform: uppercase; color: #64748b; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 6px; }
-          .val { font-weight: 700; color: #1e293b; font-size: 15px; word-break: break-word; line-height: 1.4; }
-          .hash-box { background: #0f172a; color: ${secondaryColor}; font-family: 'Courier New', monospace; padding: 16px; border-radius: 8px; font-size: 12px; word-break: break-all; text-align: left; margin-bottom: 25px; box-shadow: inset 0 4px 6px rgba(0,0,0,0.3); }
-          .hash-title { color: #94a3b8; font-size: 10px; text-transform: uppercase; margin-bottom: 8px; font-family: 'Inter', sans-serif; font-weight: 800; letter-spacing: 1px; }
-          .footer { font-size: 12px; color: #64748b; font-weight: 500; border-top: 2px dashed #cbd5e1; padding-top: 25px; line-height: 1.6; }
-        </style>
-      </head>
-      <body>
-        <div class="cert-container">
-          <div class="content">
-            <img src="${logoUrl}" class="logo" alt="Logo Instansi" />
-            
-            <div class="badge">
-              <div class="badge-icon">${badgeIcon}</div>
-              ${badgeText}
-            </div>
-            
-            <h1>${title}</h1>
-            <p class="instansi">${instansi}</p>
-            
-            ${isValid ? `
-            <div class="detail-box">
-              <div class="row">
-                <span class="label">Nomor Surat</span>
-                <span class="val">${surat.nomor_surat}</span>
-              </div>
-              <div class="row">
-                <span class="label">Perihal</span>
-                <span class="val">${surat.perihal || '-'}</span>
-              </div>
-              <div class="row">
-                <span class="label">Tanggal Dikeluarkan</span>
-                <span class="val">${new Date(surat.created_at).toLocaleDateString('id-ID', {day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute:'2-digit'})} WIB</span>
-              </div>
-              <div class="row">
-                <span class="label">Otoritas Penandatangan</span>
-                <span class="val">Pimpinan ${instansi}</span>
-              </div>
-            </div>
-            ` : `
-            <div class="detail-box" style="background: #fff1f2; border-color: #fecdd3;">
-              <div class="row">
-                <span class="label" style="color: #be123c;">Informasi Nomor Surat</span>
-                <span class="val" style="color: #881337;">${nomor}</span>
-              </div>
-              <div class="row">
-                <span class="label" style="color: #be123c;">Pesan Sistem</span>
-                <span class="val" style="color: #881337;">Tidak ada catatan penerbitan resmi untuk surat ini di database pusat.</span>
-              </div>
-            </div>
-            `}
-
-            <div class="hash-box">
-              <div class="hash-title">Digital Signature Fingerprint (SHA-256)</div>
-              ${signatureHash}
-            </div>
-
-            <div class="footer">
-              ${footerText}
-            </div>
-          </div>
-        </div>
-      </body>
-      </html>
-    `);
+    const logoUrl = settings && settings.logo_base64 ? settings.logo_base64 : '/logonebula.png';
+    
+    if (surat) {
+      const crypto = require('crypto');
+      const signatureHash = crypto.createHash('sha256').update(nomor + instansi + surat.created_at).digest('hex');
+      return res.json({ success: true, data: surat, instansi, logoUrl, signatureHash });
+    }
+    
+    res.status(404).json({ success: false, message: 'Sistem tidak menemukan dokumen ini di pangkalan data.', instansi, logoUrl });
   });
+
+  // --- API VERIFIKASI DOKUMEN MANUAL ---
+  expressApp.get('/api/verify/tag/:tag', (req, res) => {
+    const tag = req.params.tag;
+    if (!tag) return res.status(400).json({ success: false, message: 'Tag tidak valid' });
+
+    const letter = db.prepare('SELECT nomor_surat, perihal, created_at, nama_file FROM outgoing_letters WHERE document_tag = ?').get(tag);
+    const settings = db.prepare("SELECT nama_instansi, logo_base64 FROM settings LIMIT 1").get();
+    const instansi = settings ? settings.nama_instansi : "Sistem Surat";
+    const logoUrl = settings && settings.logo_base64 ? settings.logo_base64 : '/logonebula.png';
+
+    if (letter) {
+      const crypto = require('crypto');
+      const signatureHash = crypto.createHash('sha256').update(letter.nomor_surat + instansi + letter.created_at).digest('hex');
+      return res.json({ success: true, data: letter, instansi, logoUrl, signatureHash });
+    }
+    res.status(404).json({ success: false, message: 'Sistem tidak menemukan dokumen ini di pangkalan data.', instansi, logoUrl });
+  });
+
+
+  // --- HALAMAN VERIFIKASI DOKUMEN (WEB AKSES PUBLIK VIA REACT) ---
+  expressApp.get('/verify', (req, res) => {
+    // Delegasikan render UI ke React JS Vite (dist/index.html)
+    const indexPath = path.join(__dirname, '../../dist/index.html');
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      res.send("<h1>Sistem Frontend belum di-build. Jalankan 'npm run build' terlebih dahulu.</h1>");
+    }
+  });
+
+
+
 
   // Fallback for React Router (Single Page App)
   expressApp.get('*', (req, res) => {
@@ -888,12 +1050,13 @@ startExpressServer(isNaN(parsedPort) ? 8080 : parsedPort);
 // ==========================================
 // 3. JENDELA APLIKASI ELECTRON (FRONTEND UTAMA)
 // ==========================================
-function createWindow () {
+function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1024,
     minHeight: 768,
+    icon: path.join(__dirname, '../../src/assets/icon-apk.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -925,7 +1088,7 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     if (server) server.close();
-    db.close(); 
+    db.close();
     app.quit();
   }
 });
@@ -994,11 +1157,11 @@ ipcMain.handle('fs:saveFile', (event, data) => {
     }
     const safeName = `${Date.now()}_${filename.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
     const filePath = path.join(folder, safeName);
-    
+
     // Strip base64 header if exists (e.g. data:image/png;base64,)
     const base64Content = base64Data.replace(/^data:([A-Za-z-+/]+);base64,/, '');
     fs.writeFileSync(filePath, Buffer.from(base64Content, 'base64'));
-    
+
     return { success: true, filePath: filePath };
   } catch (err) {
     console.error("Save file error:", err);
@@ -1018,7 +1181,7 @@ ipcMain.handle('dialog:pilihFileRestore', async () => {
     filters: [{ name: 'SQLite Database', extensions: ['sqlite', 'db'] }]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false };
-  
+
   const selectedPath = result.filePaths[0];
   const name = path.basename(selectedPath);
   return { success: true, filePath: selectedPath, fileName: name };
@@ -1040,13 +1203,13 @@ ipcMain.handle('dialog:pilihFileDocx', async () => {
     filters: [{ name: 'Word Document', extensions: ['docx'] }]
   });
   if (result.canceled || result.filePaths.length === 0) return { success: false };
-  
+
   const selectedPath = result.filePaths[0];
   try {
     const buffer = fs.readFileSync(selectedPath);
     const base64 = buffer.toString('base64');
     const name = path.basename(selectedPath);
-    
+
     // Gunakan pizzip dan docxtemplater untuk ekstrak teks (lebih akurat untuk variabel {{}})
     // Gunakan mammoth untuk preview agar kebal terhadap salah ketik (typo) kurung kurawal di Word
     let text = "";
@@ -1056,15 +1219,15 @@ ipcMain.handle('dialog:pilihFileDocx', async () => {
       // Extract raw text for variables
       const mammothResult = await mammoth.extractRawText({ buffer: buffer });
       text = mammothResult.value;
-      
+
       // Extract rough HTML for UI preview
       const htmlResult = await mammoth.convertToHtml({ buffer: buffer });
       htmlPreview = htmlResult.value;
-    } catch(err) {
+    } catch (err) {
       console.error("Mammoth error in main:", err);
       return { success: false, error: "Gagal membaca teks dari file Word." };
     }
-    
+
     return { success: true, name, base64, text, htmlPreview };
   } catch (err) {
     console.error(err);
@@ -1074,60 +1237,60 @@ ipcMain.handle('dialog:pilihFileDocx', async () => {
 
 // Print DOCX Natively via PowerShell (Windows only) - Changed to just open file based on user request
 ipcMain.on('print-docx', (event, filePath) => {
-    let winPath = filePath;
-    if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
-        winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
+  let winPath = filePath;
+  if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
+    winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
+  }
+  console.log(`Opening file: ${winPath}`);
+  shell.openPath(winPath).then(error => {
+    if (error) {
+      console.error(`Error opening file: ${error}`);
+      dialog.showErrorBox('Gagal Membuka File', `Sistem gagal membuka dokumen.\n\nFile: ${winPath}\nError: ${error}`);
     }
-    console.log(`Opening file: ${winPath}`);
-    shell.openPath(winPath).then(error => {
-        if (error) {
-            console.error(`Error opening file: ${error}`);
-            dialog.showErrorBox('Gagal Membuka File', `Sistem gagal membuka dokumen.\n\nFile: ${winPath}\nError: ${error}`);
-        }
-    });
+  });
 });
 
 ipcMain.handle('fs:openFile', async (event, filePath) => {
-    try {
-        let winPath = filePath;
-        if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
-            winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
-        }
-        if (!fs.existsSync(winPath)) {
-             return { success: false, error: 'File tidak ditemukan' };
-        }
-        const error = await shell.openPath(winPath);
-        if (error) return { success: false, error };
-        return { success: true };
-    } catch (err) {
-        return { success: false, error: err.message };
+  try {
+    let winPath = filePath;
+    if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
+      winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
     }
+    if (!fs.existsSync(winPath)) {
+      return { success: false, error: 'File tidak ditemukan' };
+    }
+    const error = await shell.openPath(winPath);
+    if (error) return { success: false, error };
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 
 // Print DOCX silently in background via PowerShell
 ipcMain.handle('fs:cetakSuratFisik', async (event, filePath) => {
-    try {
-        let winPath = filePath;
-        if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
-            winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
-        }
-        
-        console.log(`Printing file via PowerShell: ${winPath}`);
-        return new Promise((resolve) => {
-            const { exec } = require('child_process');
-            const psPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-            // Execute PowerShell command to print the document hidden in the background
-            exec(`"${psPath}" -WindowStyle Hidden -Command "Start-Process -FilePath '${winPath}' -Verb Print -WindowStyle Hidden"`, (error) => {
-                if (error) {
-                    console.error('Print error:', error);
-                    resolve({ success: false, error: error.message });
-                } else {
-                    resolve({ success: true });
-                }
-            });
-        });
-    } catch (err) {
-        console.error(err);
-        return { success: false, error: err.message };
+  try {
+    let winPath = filePath;
+    if (process.platform !== 'win32' && filePath.startsWith('/home/')) {
+      winPath = `\\\\wsl.localhost\\Ubuntu${filePath.replace(/\//g, '\\')}`;
     }
+
+    console.log(`Printing file via PowerShell: ${winPath}`);
+    return new Promise((resolve) => {
+      const { exec } = require('child_process');
+      const psPath = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+      // Execute PowerShell command to print the document hidden in the background
+      exec(`"${psPath}" -WindowStyle Hidden -Command "Start-Process -FilePath '${winPath}' -Verb Print -WindowStyle Hidden"`, (error) => {
+        if (error) {
+          console.error('Print error:', error);
+          resolve({ success: false, error: error.message });
+        } else {
+          resolve({ success: true });
+        }
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    return { success: false, error: err.message };
+  }
 });

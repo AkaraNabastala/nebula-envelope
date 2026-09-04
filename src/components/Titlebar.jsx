@@ -1,6 +1,6 @@
 import React from 'react';
 import { Minus, Square, X } from 'lucide-react';
-import LogoNebula from '../assets/logonebula.png';
+import LogoNebula from '../assets/icon.png';
 
 export default function Titlebar({ settings }) {
   return (

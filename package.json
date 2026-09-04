@@ -24,7 +24,7 @@
       "target": [
         "dir"
       ],
-      "icon": "inno-setup/icon.ico"
+      "icon": "src/assets/icon-apk.png"
     },
     "files": [
       "dist/**/*",

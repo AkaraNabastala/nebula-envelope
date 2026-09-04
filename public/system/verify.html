@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal Verifikasi Dokumen Elektronik</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; background-color: #f3f4f6; color: #333333; margin: 0; display: flex; flex-direction: column; min-height: 100vh; }
+        .header-top { background-color: #1e3a8a; color: white; border-bottom: 4px solid #f59e0b; }
+        .card { background: white; border-radius: 8px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid #e5e7eb; }
+        .footer { background-color: #1e293b; color: #94a3b8; margin-top: auto; }
+    </style>
+</head>
+<body>
+    <header class="header-top py-6 px-4">
+        <div class="max-w-4xl mx-auto flex flex-col md:flex-row items-center gap-4">
+            <img id="headerLogo" src="" alt="Logo Instansi" class="h-16 w-auto object-contain bg-white rounded p-1 hidden">
+            <div class="text-center md:text-left">
+                <h1 class="text-2xl font-bold uppercase tracking-wide">Portal Verifikasi Dokumen</h1>
+                <p class="text-blue-200 text-sm mt-1" id="headerInstansi">Sistem Manajemen Persuratan Elektronik</p>
+            </div>
+        </div>
+    </header>
+
+    <main class="flex-grow w-full max-w-4xl mx-auto p-4 py-10">
+        <div class="card p-6 md:p-10">
+            <div id="loadingState" class="hidden text-center py-10">
+                <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-blue-600 border-t-transparent mb-4"></div>
+                <p class="text-gray-600 font-semibold">Memeriksa keaslian dokumen ke pangkalan data...</p>
+            </div>
+
+            <div id="searchForm" class="hidden">
+                <h2 class="text-xl font-bold text-gray-800 mb-2 border-b-2 border-blue-600 pb-2 inline-block">Cek Keaslian Surat</h2>
+                <p class="text-gray-600 mb-6 text-sm">Silakan masukkan Nomor Registrasi / Tag ID yang tertera pada dokumen fisik atau elektronik Anda untuk memverifikasi keasliannya.</p>
+                <div class="flex flex-col md:flex-row gap-4">
+                    <input type="text" id="tagInput" placeholder="Masukkan Nomor Registrasi / Tag..." class="flex-grow px-4 py-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-600 font-mono text-lg uppercase">
+                    <button onclick="handleManualVerify()" id="btnVerify" class="bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 px-8 rounded-md uppercase text-sm shadow-sm">Verifikasi</button>
+                </div>
+            </div>
+
+            <div id="resultArea" class="hidden mt-8"></div>
+            <div id="searchAgainBtn" class="hidden mt-6 text-center"><button onclick="resetUI()" class="text-blue-600 hover:text-blue-800 font-semibold text-sm underline">Cek Dokumen Lainnya</button></div>
+        </div>
+        <div class="mt-8 bg-blue-50 border-l-4 border-blue-600 p-4 rounded text-sm text-blue-800">
+            <strong>Informasi:</strong> Portal ini adalah sarana resmi untuk memverifikasi keabsahan dokumen yang diterbitkan oleh sistem. Pastikan data pada dokumen fisik sama persis dengan data elektronik di portal ini.
+        </div>
+    </main>
+
+    <footer class="footer py-6 text-center text-xs">
+        <p>&copy; <span id="currentYear"></span> Sistem Manajemen Surat. Hak Cipta Dilindungi Undang-Undang.</p>
+        <p class="mt-1 opacity-75">Dokumen ini diamankan dengan penanda digital SHA-256.</p>
+    </footer>
+
+    <script>
+        document.getElementById('currentYear').textContent = new Date().getFullYear();
+        const searchForm = document.getElementById('searchForm'), loadingState = document.getElementById('loadingState');
+        const resultArea = document.getElementById('resultArea'), searchAgainBtn = document.getElementById('searchAgainBtn');
+        const tagInput = document.getElementById('tagInput'), headerInstansi = document.getElementById('headerInstansi');
+        const headerLogo = document.getElementById('headerLogo');
+
+        window.addEventListener('DOMContentLoaded', () => {
+            const token = new URLSearchParams(window.location.search).get('token');
+            if (token) verifyWithToken(token); else searchForm.classList.remove('hidden');
+        });
+
+        function resetUI() {
+            resultArea.classList.add('hidden'); searchAgainBtn.classList.add('hidden');
+            searchForm.classList.remove('hidden'); tagInput.value = ''; tagInput.focus();
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        function showLoading() { searchForm.classList.add('hidden'); resultArea.classList.add('hidden'); searchAgainBtn.classList.add('hidden'); loadingState.classList.remove('hidden'); }
+        function hideLoading() { loadingState.classList.add('hidden'); }
+
+        async function verifyWithToken(token) {
+            showLoading();
+            try { displayResult(await (await fetch('/api/verify/qr?token=' + encodeURIComponent(token))).json()); } 
+            catch (err) { displayError("Koneksi ke pangkalan data terputus."); }
+        }
+
+        async function handleManualVerify() {
+            if (!tagInput.value.trim()) return alert('Silakan masukkan Nomor Registrasi atau Tag.');
+            showLoading();
+            try { displayResult(await (await fetch('/api/verify/tag/' + encodeURIComponent(tagInput.value.trim()))).json()); } 
+            catch (err) { displayError("Koneksi ke pangkalan data terputus."); }
+        }
+
+        function displayResult(json) {
+            hideLoading(); resultArea.classList.remove('hidden'); searchAgainBtn.classList.remove('hidden');
+            if (json.instansi) headerInstansi.textContent = json.instansi;
+            if (json.logoUrl) { headerLogo.src = json.logoUrl; headerLogo.classList.remove('hidden'); }
+
+            if (json.success) {
+                const dateStr = new Date(json.data.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute:'2-digit' }) + ' WIB';
+                resultArea.innerHTML = `<div class="border-t-4 border-green-600 bg-green-50 p-6 rounded shadow-sm relative overflow-hidden">
+                    <h3 class="text-xl font-bold text-green-800 mb-1">✅ DOKUMEN VALID</h3>
+                    <p class="text-green-700 text-sm mb-6 font-medium">Dokumen ini terdaftar secara resmi di sistem.</p>
+                    <table class="w-full text-left border-collapse">
+                        <tr class="border-b border-green-200"><th class="py-3 px-2 w-1/3 text-sm text-gray-700 uppercase">Nomor Surat</th><td class="py-3 px-2 font-bold text-gray-900">${json.data.nomor_surat}</td></tr>
+                        <tr class="border-b border-green-200"><th class="py-3 px-2 w-1/3 text-sm text-gray-700 uppercase">Perihal</th><td class="py-3 px-2 font-semibold text-gray-800">${json.data.perihal || '-'}</td></tr>
+                        <tr class="border-b border-green-200"><th class="py-3 px-2 w-1/3 text-sm text-gray-700 uppercase">Tanggal Terbit</th><td class="py-3 px-2 font-semibold text-gray-800">${dateStr}</td></tr>
+                    </table>
+                    <div class="mt-6 bg-white p-3 rounded border border-gray-200 flex flex-col gap-1">
+                        <span class="text-xs font-bold text-gray-500 uppercase">SHA-256 Digital Fingerprint</span>
+                        <span class="text-xs font-mono text-gray-700 break-all">${json.signatureHash || '-'}</span>
+                    </div></div>`;
+            } else { displayError(json.message); }
+        }
+
+        function displayError(msg) {
+            hideLoading(); resultArea.classList.remove('hidden'); searchAgainBtn.classList.remove('hidden');
+            resultArea.innerHTML = `<div class="border-t-4 border-red-600 bg-red-50 p-6 rounded shadow-sm"><h3 class="text-xl font-bold text-red-800 mb-2">⚠ PERINGATAN KEAMANAN</h3><p class="text-red-700 font-medium">${msg}</p></div>`;
+        }
+        tagInput.addEventListener('keypress', e => { if (e.key === 'Enter') handleManualVerify(); });
+    </script>
+</body>
+</html>

@@ -4,14 +4,17 @@ import Sidebar from './components/Sidebar';
 import Titlebar from './components/Titlebar';
 import Header from './components/Header';
 import FolderPickerModal from './components/FolderPickerModal';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
+import { Hash, Plus, Trash2, Eye, Search, AlertTriangle, X, CheckSquare, Trash } from 'lucide-react';
 
 import Dashboard from './pages/Dashboard';
 import CreateLetter from './pages/CreateLetter';
 import ArchiveLetters from './pages/ArchiveLetters';
+import LetterNumbers from './pages/LetterNumbers';
 import TemplateManager from './pages/TemplateManager';
 import MasterData from './pages/MasterData';
 import Settings from './pages/Settings';
+import Verify from './pages/Verify';
 
 import {
   seedInitialData,
@@ -20,11 +23,19 @@ import {
   getMasterData,
   getOutgoingLetters,
   getIncomingArchives,
-  getAuditLogs
+  getAuditLogs,
+  saveOutgoingLetter,
+  deleteOutgoingLetter,
+  bulkDeleteOutgoingLetters,
+  triggerToast
 } from './services/db';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(() => {
+    // Tangkap jika diakses via /verify 
+    if (window.location.pathname === '/verify' || window.location.hash.startsWith('#/verify')) {
+      return 'verify';
+    }
     if (sessionStorage.getItem('appSessionToken') === 'true') {
       return sessionStorage.getItem('activeTab') || 'dashboard';
     }
@@ -177,6 +188,16 @@ export default function App() {
       setNamaLengkap(nama_lengkap || 'Pengguna');
       setActiveTab('dashboard');
     }} />;
+  }
+
+  // Jika tab adalah verify, render komponen Verifikasi TANPA layout sidebar/dashboard
+  if (activeTab === 'verify') {
+    return (
+      <>
+        <Toaster position="top-right" richColors />
+        <Verify settings={settings} />
+      </>
+    );
   }
 
   const handleLogout = () => {
@@ -343,6 +364,15 @@ export default function App() {
                 onArchiveAdded={() => refreshData()}
                 onViewDocument={(doc) => setViewingDocument(doc)}
                 onOpenFolderPicker={() => setIsFolderPickerOpen(true)}
+              />
+            )}
+
+            {activeTab === 'nomor-surat' && (
+              <LetterNumbers
+                outgoingLetters={outgoingLetters}
+                settings={settings}
+                onNumberAdded={() => refreshData()}
+                onViewDocument={(doc) => setViewingDocument(doc)}
               />
             )}
 
